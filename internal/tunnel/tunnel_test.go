@@ -1174,6 +1174,10 @@ func TestDeleteIsGuardedToo(t *testing.T) {
 func greWssRequest() Request {
 	req := request()
 	req.TunnelTypeID = model.TunnelTypeGREWSS
+	// The port is entered by the operator, like a port-forwarding rule's
+	// bind port: there is no default.
+	port := int64(8443)
+	req.WssPort = &port
 	return req
 }
 
@@ -1200,8 +1204,8 @@ func TestCreateGreWssAppliesVerifiesAndPersists(t *testing.T) {
 	if len(*rec.WssToken) != 32 {
 		t.Fatalf("the WSS token is %d characters, want 32", len(*rec.WssToken))
 	}
-	if rec.WssPort == nil || *rec.WssPort != 443 {
-		t.Fatalf("the WSS port is %v, want 443", rec.WssPort)
+	if rec.WssPort == nil || *rec.WssPort != 8443 {
+		t.Fatalf("the WSS port is %v, want the entered 8443", rec.WssPort)
 	}
 
 	unit := persist.UnitName("gre-wss-a-1")
@@ -1235,8 +1239,8 @@ func TestCreateGreWssAppliesVerifiesAndPersists(t *testing.T) {
 	if !strings.Contains(string(unitText), "relay --tun gre-wss-a-1") {
 		t.Fatalf("the unit does not run the relay: %s", unitText)
 	}
-	if !strings.Contains(string(unitText), "--listen 0.0.0.0:443") {
-		t.Fatal("side A does not listen on 443")
+	if !strings.Contains(string(unitText), "--listen 0.0.0.0:8443") {
+		t.Fatal("side A does not listen on the entered port")
 	}
 
 	// The plan's file step carries the secret mode, so a preview shows the
@@ -1337,6 +1341,22 @@ func TestSwitchPreviewShowsWhatWouldChange(t *testing.T) {
 	if _, err := h.service.SwitchPreview(ctx, created.Tunnel.TunnelID, model.TunnelTypeGRE); err == nil {
 		t.Fatal("previewing a switch to the same carrier succeeded")
 	} else if !strings.Contains(err.Error(), "already") {
+		t.Fatalf("the refusal does not say why: %v", err)
+	}
+}
+
+// The WSS port has no default: the operator enters it, the way a
+// port-forwarding rule's bind port is entered. Creating a GRE-over-WSS
+// tunnel without one is refused, with the reason.
+func TestCreateGreWssWithoutAPortIsRefused(t *testing.T) {
+	h := newHarness(t)
+	req := greWssRequest()
+	req.WssPort = nil
+	_, err := h.service.Create(context.Background(), req)
+	if err == nil {
+		t.Fatal("creating a GRE-over-WSS tunnel without a port succeeded")
+	}
+	if !strings.Contains(err.Error(), "needs a port") {
 		t.Fatalf("the refusal does not say why: %v", err)
 	}
 }

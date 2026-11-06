@@ -9,10 +9,6 @@ import (
 
 // GRE-over-WSS defaults and helpers.
 const (
-	// WssDefaultPort is the TCP port a GRE-over-WSS tunnel serves on when the
-	// operator does not choose one. 443 is the HTTPS port, which is the one a
-	// path that filters GRE is least likely to block.
-	WssDefaultPort = 443
 	// WssTokenBytes is the length of the shared token, in bytes (hex-encoded
 	// to twice that many characters).
 	WssTokenBytes = 16

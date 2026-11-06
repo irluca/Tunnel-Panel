@@ -651,6 +651,7 @@ export function TunnelFormDialog({
                 label={t('tunnel.fields.wssPort')}
                 description={t('tunnel.help.wssPort')}
                 error={fieldErrors['wss_port']}
+                required
               >
                 {(props) => (
                   <TechnicalInput
@@ -660,7 +661,7 @@ export function TunnelFormDialog({
                     max={65535}
                     value={form.wss_port ?? ''}
                     onChange={(event) => set('wss_port', event.target.value === '' ? null : Number(event.target.value))}
-                    placeholder="443"
+                    placeholder={t('tunnel.help.wssPortPlaceholder')}
                   />
                 )}
               </Field>

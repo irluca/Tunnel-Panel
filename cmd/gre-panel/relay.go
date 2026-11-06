@@ -50,6 +50,11 @@ func runRelay(args []string) error {
 		return fmt.Errorf("--token is required")
 	case (*listen == "") == (*dial == ""):
 		return fmt.Errorf("exactly one of --listen and --dial is required")
+	case strings.HasSuffix(*listen, ":0") || strings.HasSuffix(*dial, ":0/gre-wss"):
+		// A port of zero would let the listener pick a random port, which is
+		// never what a tunnel wants. The panel requires a port at creation,
+		// so this only fires for a record that lost one.
+		return fmt.Errorf("a WSS port is required")
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)

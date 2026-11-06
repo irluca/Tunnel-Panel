@@ -59,6 +59,7 @@ func init() {
 		"An ESP tunnel does not carry a firewall mark.":                                                                                            "تونل ESP نشان دیوارهٔ آتش ندارد.",
 		"An ESP tunnel needs systemd persistence: only the systemd unit re-establishes the IPsec security associations after a reboot.":            "تونل ESP به ماندگاری systemd نیاز دارد: فقط یونیت systemd پس از راه‌اندازی دوباره انجمن‌های امنیتی IPsec را دوباره برقرار می‌کند.",
 		"A WSS token must be 32 hexadecimal characters.":                                                                                           "توکن WSS باید ۳۲ کاراکتر هگزادسیمال باشد.",
+		"A GRE-over-WSS tunnel needs a port. Enter one.":                                                                                           "تونل GRE-over-WSS به یک پورت نیاز دارد. یکی وارد کنید.",
 		"A WSS port is between 1 and 65535.":                                                                                                       "پورت WSS بین ۱ و ۶۵۵۳۵ است.",
 		"Checksum and sequence options belong to GRE and have no meaning on a GRE-over-WSS tunnel.":                                                "گزینه‌های checksum و sequence از GRE هستند و روی تونل GRE روی WSS معنایی ندارند.",
 		"Path-MTU discovery belongs to GRE and has no meaning on a GRE-over-WSS tunnel.":                                                           "کشف path-MTU از GRE است و روی تونل GRE روی WSS معنایی ندارد.",

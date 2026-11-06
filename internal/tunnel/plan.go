@@ -232,10 +232,11 @@ func SpecOf(rec Record) link.TunnelSpec {
 		if rec.WssToken != nil {
 			spec.WssToken = *rec.WssToken
 		}
+		// The port is required at creation, so a stored record has one. A
+		// record that somehow has none leaves the port at zero, and the relay
+		// refuses to start on it — silently assuming 443 is what got us here.
 		if rec.WssPort != nil {
 			spec.WssPort = int(*rec.WssPort)
-		} else {
-			spec.WssPort = link.WssDefaultPort
 		}
 	}
 	return spec

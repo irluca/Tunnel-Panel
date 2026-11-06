@@ -195,6 +195,14 @@ func validateGreWss(ctx context.Context, in TunnelInput, errs *Errors, partial b
 				i18n.T(ctx, "A WSS token must be 32 hexadecimal characters."), nil)
 		}
 	}
+	// The port has no default: the operator enters it, the way the
+	// port-forwarding section asks for a port rather than assuming one. A
+	// GRE-over-WSS tunnel without a port has nothing to listen on and
+	// nothing to dial, so creation without one is refused.
+	if !partial && in.WssPort == nil {
+		errs.Add("wss_port", CodeInvalidWssPort,
+			i18n.T(ctx, "A GRE-over-WSS tunnel needs a port. Enter one."), nil)
+	}
 	if in.WssPort != nil && (*in.WssPort < 1 || *in.WssPort > 65535) {
 		errs.Add("wss_port", CodeInvalidWssPort,
 			i18n.T(ctx, "A WSS port is between 1 and 65535."), nil)

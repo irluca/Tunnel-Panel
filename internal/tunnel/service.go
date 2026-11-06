@@ -380,10 +380,11 @@ func (s *Service) ApplyDefaults(ctx context.Context, in *validate.TunnelInput) e
 		}
 	}
 
-	// A GRE-over-WSS tunnel's token is generated the same way, and its port
-	// defaults to 443, the HTTPS port a filtering path is least likely to
-	// block. Both are creation-only: on an update the stored values stand
-	// unless the operator supplies new ones.
+	// A GRE-over-WSS tunnel's token is generated the same way. Its port is
+	// not defaulted: the operator enters it, the way the port-forwarding
+	// section asks for a port rather than assuming one. Both are
+	// creation-only: on an update the stored values stand unless the
+	// operator supplies new ones.
 	if in.TunnelID == 0 && in.TunnelTypeID == model.TunnelTypeGREWSS {
 		if in.WssToken == nil || strings.TrimSpace(*in.WssToken) == "" {
 			token, err := link.GenerateWssToken()
@@ -391,10 +392,6 @@ func (s *Service) ApplyDefaults(ctx context.Context, in *validate.TunnelInput) e
 				return err
 			}
 			in.WssToken = &token
-		}
-		if in.WssPort == nil {
-			port := int64(link.WssDefaultPort)
-			in.WssPort = &port
 		}
 	}
 
