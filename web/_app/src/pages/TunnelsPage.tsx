@@ -3,6 +3,7 @@ import { Link, useOutletContext, useSearchParams } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { useQuery } from '@tanstack/react-query'
 import {
+  AlertTriangle,
   ChevronDown,
   Download,
   Loader2,
@@ -67,7 +68,7 @@ export default function TunnelsPage() {
   const typeFilter = params.get('type') ?? ''
   const sideFilter = params.get('side') ?? ''
   const applyFilter = params.get('apply') ?? ''
-  const sortKey = (params.get('sort') as SortKey) ?? 'name'
+  const sortKey = (params.get('sort') as SortKey) ?? 'status'
   const expandedId = params.get('expanded')
 
   const [selected, setSelected] = useState<Set<number>>(new Set())
@@ -146,6 +147,31 @@ export default function TunnelsPage() {
   const total = listQuery.data?.total ?? 0
   const filtersActive = Boolean(search || statusFilter || typeFilter || sideFilter || applyFilter)
 
+  // The attention bar: the tunnels that need an operator, worst first. A
+  // tunnel is in it when the monitor says it is Down or Degraded, or when
+  // the last apply left it Inconsistent or Failed. It is computed from the
+  // same list and monitor data the table already has, so it costs no extra
+  // request, and it is the first thing on the page because a tunnel that is
+  // down is more important than a filter.
+  const attention = useMemo(() => {
+    const rows = listQuery.data?.tunnels ?? []
+    return rows
+      .filter((row) => {
+        const state = monitor.byTunnel.get(row.tunnel.tunnel_id)?.monitor_state_id ?? MonitorState.Unknown
+        return (
+          state === MonitorState.Down ||
+          state === MonitorState.Degraded ||
+          row.tunnel.apply_status_id === ApplyStatus.Inconsistent ||
+          row.tunnel.apply_status_id === ApplyStatus.Failed
+        )
+      })
+      .map((row) => ({
+        tunnel: row.tunnel,
+        state: monitor.byTunnel.get(row.tunnel.tunnel_id)?.monitor_state_id ?? MonitorState.Unknown,
+      }))
+      .sort((a, b) => b.state - a.state)
+  }, [listQuery.data, monitor.byTunnel])
+
   const toggleSelected = (id: number) =>
     setSelected((current) => {
       const next = new Set(current)
@@ -162,6 +188,29 @@ export default function TunnelsPage() {
 
   return (
     <div className="space-y-4">
+      {attention.length ? (
+        <div
+          role="alert"
+          className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-md border border-danger/30 bg-danger-muted px-3 py-2"
+        >
+          <AlertTriangle className="size-4 shrink-0 text-danger" aria-hidden="true" />
+          <span className="text-sm font-medium">
+            {t('tunnels.attentionBar', { count: attention.length })}
+          </span>
+          <ul className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            {attention.map(({ tunnel }) => (
+              <li key={tunnel.tunnel_id}>
+                <Link
+                  to={`/tunnels/${tunnel.tunnel_id}`}
+                  className="text-sm font-medium text-danger underline underline-offset-2"
+                >
+                  {tunnelLabel(tunnel)}
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
       <div className="flex flex-wrap items-center gap-2">
         <div className="relative min-w-0 flex-1 sm:max-w-xs">
           <Search

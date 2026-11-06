@@ -364,6 +364,7 @@ func (s *Server) buildRouter() http.Handler {
 						r.Post("/restart", s.tunnelAction("restart", model.AuditActionTunnelReapply, s.tunnels.Restart))
 						r.Post("/reapply", s.tunnelAction("reapply", model.AuditActionTunnelReapply, s.tunnels.Reapply))
 						r.Post("/switch", s.handleSwitchTunnel)
+					r.Post("/switch/preview", s.handleSwitchPreview)
 
 						r.Get("/addresses", s.handleListAddresses)
 						r.Post("/addresses", s.handleAddAddress)

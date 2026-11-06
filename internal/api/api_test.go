@@ -792,10 +792,10 @@ func TestFullSessionFlow(t *testing.T) {
 		t.Errorf("the schema has %d entries, want %d", len(schema.Settings), len(settings.Keys()))
 	}
 	// One category per group the settings screen renders: tunnel, addressing,
-	// keepalive, monitor, diagnostics, metrics, routes, display, security and
-	// system.
-	if len(schema.Categories) != 10 {
-		t.Errorf("the schema reports %d categories, want 10: %v", len(schema.Categories), schema.Categories)
+	// keepalive, monitor, diagnostics, metrics, routes, display, security,
+	// system and notifications.
+	if len(schema.Categories) != 11 {
+		t.Errorf("the schema reports %d categories, want 11: %v", len(schema.Categories), schema.Categories)
 	}
 	for _, entry := range schema.Settings {
 		if entry.Description == "" || entry.Category == "" || entry.Type == "" {

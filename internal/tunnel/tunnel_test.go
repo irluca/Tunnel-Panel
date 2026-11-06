@@ -1301,3 +1301,42 @@ func TestUpdateOfAGreWssTunnelKeepsItsTokenAndPort(t *testing.T) {
 		t.Fatalf("the port changed on an unrelated edit: %v", rec.WssPort)
 	}
 }
+
+// The switch preview says what a switch would change — the new name and the
+// fresh key — without applying anything, and a switch the backend would
+// refuse is refused here too, with the same reason.
+func TestSwitchPreviewShowsWhatWouldChange(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+
+	created := h.mustCreate(t, request())
+	preview, err := h.service.SwitchPreview(ctx, created.Tunnel.TunnelID, model.TunnelTypeESP)
+	if err != nil {
+		t.Fatalf("the preview failed: %v", err)
+	}
+	if preview.NewInterfaceName != "esp-a-1" {
+		t.Fatalf("new interface name = %q, want %q", preview.NewInterfaceName, "esp-a-1")
+	}
+	if !preview.NameChanges {
+		t.Fatal("the preview does not say the name changes")
+	}
+	if !preview.FreshEspKey {
+		t.Fatal("the preview does not say a fresh ESP key would be generated")
+	}
+	// Nothing was applied: the tunnel is still GRE.
+	stored, err := h.repo.ByID(ctx, created.Tunnel.TunnelID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.TunnelTypeID != model.TunnelTypeGRE {
+		t.Fatalf("the preview changed the tunnel: type = %d", stored.TunnelTypeID)
+	}
+
+	// A switch to the same carrier is refused, with the same reason as the
+	// switch itself.
+	if _, err := h.service.SwitchPreview(ctx, created.Tunnel.TunnelID, model.TunnelTypeGRE); err == nil {
+		t.Fatal("previewing a switch to the same carrier succeeded")
+	} else if !strings.Contains(err.Error(), "already") {
+		t.Fatalf("the refusal does not say why: %v", err)
+	}
+}

@@ -3,6 +3,7 @@ package watchdog
 import (
 	"context"
 	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -272,5 +273,41 @@ func TestFailedSwitchCountsTowardTheBreaker(t *testing.T) {
 	w.tick(ctx)
 	if len(sw.calls) != 3 {
 		t.Fatalf("attempts = %d, want 3 (breaker)", len(sw.calls))
+	}
+}
+
+type fakeNotifier struct {
+	messages []string
+}
+
+func (f *fakeNotifier) Send(ctx context.Context, text string) error {
+	f.messages = append(f.messages, text)
+	return nil
+}
+
+// The watchdog tells the operator when it switches a carrier on its own.
+func TestWatchdogNotifiesWhenItSwitches(t *testing.T) {
+	now := time.Now()
+	snaps := &fakeSnapshots{snaps: []monitor.Snapshot{downSnapshot(1, now.Add(-61*time.Second))}}
+	sw := &fakeSwitcher{}
+	notify := &fakeNotifier{}
+	w := New(Deps{
+		Snapshots: snaps,
+		Tunnels:   &fakeTunnels{records: []tunnel.Record{greRecord(1)}},
+		Switch:    sw,
+		Settings:  defaultSettings(true),
+		Notify:    notify,
+		Log:       slog.Default(),
+		Now:       func() time.Time { return now },
+	})
+	w.tick(context.Background())
+	if len(sw.calls) != 1 {
+		t.Fatalf("switches = %d, want 1", len(sw.calls))
+	}
+	if len(notify.messages) != 1 {
+		t.Fatalf("notifications = %d, want 1", len(notify.messages))
+	}
+	if !strings.Contains(notify.messages[0], "gre-a-1") {
+		t.Fatalf("the notification does not name the tunnel: %q", notify.messages[0])
 	}
 }

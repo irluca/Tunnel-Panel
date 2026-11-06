@@ -426,6 +426,8 @@ export default {
     emptyTitle: 'No tunnels configured',
     emptyBody:
       'A tunnel connects this server to one other server. Create one here, or paste a pairing code from the other end.',
+    attentionBar: '{{count}} tunnels need attention',
+    attentionBar_one: '{{count}} tunnel needs attention',
     noMatchTitle: 'Nothing matches those filters',
     noMatchBody: 'Try a different search, or clear the filters.',
     selected: '{{count}} selected',
@@ -647,6 +649,12 @@ export default {
     confirm: 'Switch to {{to}}',
     doneBody: 'The tunnel now runs on {{to}}. Give the far end this code so it can switch too.',
     peerBody: 'The far end needs the same switch. Without this code it cannot.',
+    preview: {
+      newName: 'New interface name',
+      nameStays: 'Interface name stays',
+      freshEspKey: 'A fresh ESP key will be generated; the old GRE keys do not carry over.',
+      greKeyFromSettings: 'The default GRE key from the settings will be used; the ESP key does not carry over.',
+    },
   },
 
   deleteDialog: {
@@ -674,6 +682,13 @@ export default {
     overview: 'Overview',
     charts: 'Latency and loss',
     events: 'Events',
+    traffic: {
+      title: 'Traffic',
+      sent: 'Sent',
+      received: 'Received',
+      packets: '{{sent}} packets sent · {{received}} received',
+      resetNote: 'The totals reset whenever the tunnel is rebuilt.',
+    },
     diagnostics: 'Diagnostics',
     configuration: 'Configuration',
     audit: 'History',
@@ -881,6 +896,7 @@ export default {
       routes: 'Port forwarding defaults',
       security: 'Security',
       system: 'System',
+      notifications: 'Notifications',
     },
     categoryHelp: {
       display: 'How the panel looks and how figures are expressed.',
@@ -893,6 +909,7 @@ export default {
       routes: 'Values a new forwarding rule starts with, and how relayed traffic is measured. Every one is editable per rule.',
       security: 'Sessions, rate limits and origins.',
       system: 'Retention, reconciliation and housekeeping.',
+      notifications: 'Where the panel tells the operator what it did on its own.',
     },
     // The choices an enum setting offers. Without this block the control fell
     // back to the wire token, so a Farsi operator chose between options

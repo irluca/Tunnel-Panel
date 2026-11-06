@@ -915,6 +915,27 @@ export interface TracerouteResult {
   detail: string
 }
 
+export interface InterfaceCounters {
+  rx_bytes: number
+  tx_bytes: number
+  rx_packets: number
+  tx_packets: number
+  rx_errors: number
+  tx_errors: number
+  rx_dropped: number
+  tx_dropped: number
+}
+
+export interface CounterSnapshot {
+  interface_name: string
+  counters: InterfaceCounters
+  deltas: InterfaceCounters
+  rx_bytes_per_second: number
+  tx_bytes_per_second: number
+  interval_seconds: number
+  sampled_at: string
+}
+
 export interface CountersResponse {
   interface_name: string
   counters: InterfaceCounters

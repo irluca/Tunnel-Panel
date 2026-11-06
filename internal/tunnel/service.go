@@ -978,11 +978,80 @@ func (s *Service) Switch(ctx context.Context, id int64, targetTypeID int64, espK
 	if err != nil {
 		return Result{}, err
 	}
+	in, err := s.switchInput(ctx, current, targetTypeID, espKey)
+	if err != nil {
+		return Result{}, err
+	}
+	return s.Update(ctx, id, Request{
+		TunnelInput:     in,
+		ConfirmRecreate: true,
+		ClientIP:        clientIP,
+	})
+}
+
+// SwitchPreviewResult is what a carrier switch would change, before it is
+// applied. It is the preview the dialog shows so the operator can see the
+// new name and the new key before committing to a rebuild that briefly
+// interrupts the tunnel.
+type SwitchPreviewResult struct {
+	CurrentTypeID int64  `json:"current_tunnel_type_id"`
+	TargetTypeID  int64  `json:"target_tunnel_type_id"`
+	InterfaceName string `json:"interface_name"`
+	// NewInterfaceName is the name the tunnel would get. A templated name
+	// re-renders for the new carrier (gre-a-1 becomes esp-a-1); a name the
+	// operator chose by hand stays theirs.
+	NewInterfaceName string `json:"new_interface_name"`
+	NameChanges      bool   `json:"name_changes"`
+	// FreshEspKey reports that switching to ESP would generate a fresh key,
+	// because none was supplied and the old GRE keys do not carry over.
+	FreshEspKey bool `json:"fresh_esp_key"`
+	// GreKeyFromSettings reports that switching to GRE would take the
+	// default GRE key from the settings, because the ESP key does not carry
+	// over.
+	GreKeyFromSettings bool `json:"gre_key_from_settings"`
+}
+
+// SwitchPreview computes what Switch would change, without applying it.
+// A switch the backend would refuse is refused here too, with the same
+// reason — the preview is where the exact rejection reason is first shown.
+func (s *Service) SwitchPreview(ctx context.Context, id int64, targetTypeID int64) (SwitchPreviewResult, error) {
+	current, err := s.repo.ByID(ctx, id)
+	if err != nil {
+		return SwitchPreviewResult{}, err
+	}
+	in, err := s.switchInput(ctx, current, targetTypeID, nil)
+	if err != nil {
+		return SwitchPreviewResult{}, err
+	}
+	name := current.InterfaceName
+	if current.IsNameTemplated {
+		rendered, err := s.renderName(ctx, in)
+		if err != nil {
+			return SwitchPreviewResult{}, err
+		}
+		name = rendered
+	}
+	return SwitchPreviewResult{
+		CurrentTypeID:      current.TunnelTypeID,
+		TargetTypeID:       targetTypeID,
+		InterfaceName:      current.InterfaceName,
+		NewInterfaceName:   name,
+		NameChanges:        name != current.InterfaceName,
+		FreshEspKey:        targetTypeID == model.TunnelTypeESP && in.EspKey == nil,
+		GreKeyFromSettings: targetTypeID == model.TunnelTypeGRE && in.IKey != nil,
+	}, nil
+}
+
+// switchInput builds the input a carrier switch applies: the current
+// record's values carried across, the type changed, and the keys swapped
+// for the new carrier. It is shared by Switch and SwitchPreview so the
+// preview can never disagree with what the switch would do.
+func (s *Service) switchInput(ctx context.Context, current Record, targetTypeID int64, espKey *string) (validate.TunnelInput, error) {
 	if current.TunnelTypeID == targetTypeID {
-		return Result{}, i18n.Errorf(ctx, "the tunnel is already %s", model.TunnelTypeKind(targetTypeID))
+		return validate.TunnelInput{}, i18n.Errorf(ctx, "the tunnel is already %s", model.TunnelTypeKind(targetTypeID))
 	}
 	if targetTypeID != model.TunnelTypeGRE && targetTypeID != model.TunnelTypeESP {
-		return Result{}, i18n.Errorf(ctx, "switching is only between GRE and ESP")
+		return validate.TunnelInput{}, i18n.Errorf(ctx, "switching is only between GRE and ESP")
 	}
 	in := mergedInput(current)
 	in.TunnelTypeID = targetTypeID
@@ -1006,11 +1075,7 @@ func (s *Service) Switch(ctx context.Context, id int64, targetTypeID int64, espK
 			in.OKey = &second
 		}
 	}
-	return s.Update(ctx, id, Request{
-		TunnelInput:     in,
-		ConfirmRecreate: true,
-		ClientIP:        clientIP,
-	})
+	return in, nil
 }
 
 // ---------------------------------------------------------------- delete

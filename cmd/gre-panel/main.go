@@ -36,6 +36,7 @@ import (
 	"github.com/drs/gre-panel/internal/lock"
 	"github.com/drs/gre-panel/internal/metrics"
 	"github.com/drs/gre-panel/internal/monitor"
+	"github.com/drs/gre-panel/internal/notify"
 	"github.com/drs/gre-panel/internal/persist"
 	"github.com/drs/gre-panel/internal/quota"
 	"github.com/drs/gre-panel/internal/reconcile"
@@ -521,10 +522,12 @@ func run() error {
 	// carrier, with the circuit breaker as the safety. It reads the same
 	// verdicts the dashboard shows and switches through the same service the
 	// operator's own switch button uses, so a switch it makes is verified and
-	// rolled back exactly like a manual one.
+	// rolled back exactly like a manual one. It tells the operator over
+	// Telegram when it acts — through a tunnel when one is configured, so the
+	// alert can leave even when the server's own path is filtered.
 	watchdog := watchdog.New(watchdog.Deps{
 		Snapshots: monitorSupervisor, Tunnels: repo, Switch: tunnelService,
-		Settings: store, Log: log,
+		Settings: store, Notify: notify.New(store, repo, log), Log: log,
 	})
 	go watchdog.Start(ctx)
 

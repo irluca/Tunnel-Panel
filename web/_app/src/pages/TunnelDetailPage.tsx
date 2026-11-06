@@ -11,6 +11,7 @@ import {
   TunnelSide,
   TunnelType,
   type AuditResponse,
+  type CounterSnapshot,
   type MonitorHistoryResponse,
   type MonitorStatusResponse,
   type TunnelResponse,
@@ -20,7 +21,10 @@ import {
   formatMs,
   formatPercent,
   formatRelative,
+  formatThroughput,
+  formatVolume,
   hasDisplayName,
+  toDigits,
   tunnelLabel,
 } from '@/lib/format'
 import { usePreferences } from '@/providers/PreferencesProvider'
@@ -68,7 +72,7 @@ export default function TunnelDetailPage() {
   const [switching, setSwitching] = useState(false)
 
   const actions = useTunnelActions()
-  const { calendar, digits, language } = usePreferences()
+  const { calendar, digits, language, units } = usePreferences()
 
   const tunnelQuery = useQuery({
     queryKey: ['tunnels', tunnelId],
@@ -97,6 +101,18 @@ export default function TunnelDetailPage() {
       }),
     enabled: Number.isFinite(tunnelId),
     refetchInterval: range === 'live' ? 5000 : 60000,
+  })
+
+  // The traffic ledger: the kernel's cumulative counters for this tunnel's
+  // interface, and the rate over the last sample. It refreshes on its own
+  // so the rate stays live, and it is the only place the tunnel's own
+  // traffic totals are shown — the dashboard's traffic card is per interface
+  // across the whole server.
+  const countersQuery = useQuery({
+    queryKey: ['tunnels', tunnelId, 'counters'],
+    queryFn: () => api.get<CounterSnapshot>(`/tunnels/${tunnelId}/counters`, { query: { sample_seconds: '1' } }),
+    enabled: Number.isFinite(tunnelId),
+    refetchInterval: 15000,
   })
 
   const tunnel = tunnelQuery.data?.tunnel
@@ -293,6 +309,49 @@ export default function TunnelDetailPage() {
                   ) : (
                     <Skeleton className="h-24" />
                   )}
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle>{t('tunnelDetail.traffic.title')}</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  {countersQuery.isLoading ? (
+                    <Skeleton className="h-16" />
+                  ) : countersQuery.error ? (
+                    <ErrorState error={countersQuery.error} onRetry={() => void countersQuery.refetch()} compact />
+                  ) : countersQuery.data ? (
+                    <div className="space-y-3">
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <p className="text-2xs text-muted-foreground">{t('tunnelDetail.traffic.sent')}</p>
+                          <p className="readout mt-1 text-2xl">
+                            {formatVolume(countersQuery.data.counters.tx_bytes, units).text}
+                          </p>
+                          <p className="text-2xs text-muted-foreground">
+                            {formatThroughput(countersQuery.data.tx_bytes_per_second, units).text}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-2xs text-muted-foreground">{t('tunnelDetail.traffic.received')}</p>
+                          <p className="readout mt-1 text-2xl">
+                            {formatVolume(countersQuery.data.counters.rx_bytes, units).text}
+                          </p>
+                          <p className="text-2xs text-muted-foreground">
+                            {formatThroughput(countersQuery.data.rx_bytes_per_second, units).text}
+                          </p>
+                        </div>
+                      </div>
+                      <p className="text-2xs text-muted-foreground">
+                        {t('tunnelDetail.traffic.packets', {
+                          sent: toDigits(String(countersQuery.data.counters.tx_packets), digits),
+                          received: toDigits(String(countersQuery.data.counters.rx_packets), digits),
+                        })}
+                      </p>
+                      <p className="text-2xs text-muted-foreground">{t('tunnelDetail.traffic.resetNote')}</p>
+                    </div>
+                  ) : null}
                 </CardContent>
               </Card>
 

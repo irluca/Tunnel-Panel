@@ -17,6 +17,7 @@ package watchdog
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"sync"
 	"time"
@@ -63,12 +64,22 @@ type Snapshots interface {
 }
 
 // Deps is everything the watchdog needs.
+// Notifier is what the watchdog tells when it acts on its own: a carrier
+// switch, or a breaker trip. It is an interface so the watchdog can be
+// tested without a Telegram token.
+type Notifier interface {
+	Send(ctx context.Context, text string) error
+}
+
 type Deps struct {
 	Snapshots Snapshots
 	Tunnels   TunnelSource
 	Switch    Switcher
 	Settings  Settings
-	Log       *slog.Logger
+	// Notify is told when the watchdog switches a carrier or its breaker
+	// trips. Nil means nobody is told.
+	Notify Notifier
+	Log    *slog.Logger
 	// Now is the clock, for tests. It defaults to time.Now.
 	Now func() time.Time
 }
@@ -79,6 +90,7 @@ type Watchdog struct {
 	tunnels   TunnelSource
 	switcher  Switcher
 	settings  Settings
+	notify    Notifier
 	log       *slog.Logger
 	now       func() time.Time
 
@@ -113,6 +125,7 @@ func New(d Deps) *Watchdog {
 		tunnels:        d.Tunnels,
 		switcher:       d.Switch,
 		settings:       d.Settings,
+		notify:         d.Notify,
 		log:            log,
 		now:            now,
 		lastSwitch:     map[int64]time.Time{},
@@ -200,6 +213,8 @@ func (w *Watchdog) consider(ctx context.Context, rec tunnel.Record, target int64
 				reason: "too many switches in the window"}
 			w.log.Warn("watchdog breaker tripped: leaving the tunnel alone",
 				"tunnel", rec.InterfaceName, "switches", len(kept), "window", window)
+			w.tell(ctx, fmt.Sprintf("The watchdog stopped switching %s: %d switches in %s, so the breaker tripped and the tunnel is left alone.",
+				rec.InterfaceName, len(kept), window))
 		}
 		w.mu.Unlock()
 		return
@@ -214,10 +229,26 @@ func (w *Watchdog) consider(ctx context.Context, rec tunnel.Record, target int64
 	if err != nil {
 		w.log.Error("watchdog switch failed; the previous carrier was restored",
 			"tunnel", rec.InterfaceName, "target", target, "error", err)
+		w.tell(ctx, fmt.Sprintf("The watchdog tried to switch %s to %s and failed; the previous carrier was restored. (%v)",
+			rec.InterfaceName, model.TunnelTypeKind(target), err))
 		return
 	}
 	w.log.Info("watchdog switched the carrier",
 		"tunnel", rec.InterfaceName, "target", target)
+	w.tell(ctx, fmt.Sprintf("The watchdog switched %s to %s after it was down for a minute.",
+		rec.InterfaceName, model.TunnelTypeKind(target)))
+}
+
+// tell sends a message through the notifier, if one is wired. A delivery
+// failure is logged and swallowed: the notification is about the action, and
+// a failed notification must never make the action look failed.
+func (w *Watchdog) tell(ctx context.Context, text string) {
+	if w.notify == nil {
+		return
+	}
+	if err := w.notify.Send(ctx, text); err != nil {
+		w.log.Warn("sending the watchdog notification failed", "error", err)
+	}
 }
 
 // otherCarrier returns the carrier a tunnel switches to, and whether it has

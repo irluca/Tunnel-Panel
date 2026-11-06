@@ -588,6 +588,27 @@ func (s *Server) handleSwitchTunnel(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// handleSwitchPreview returns what a carrier switch would change, without
+// applying it. It is a read, so it is not audited and it changes nothing.
+func (s *Server) handleSwitchPreview(w http.ResponseWriter, r *http.Request) {
+	rec, ok := s.tunnelFromPath(w, r)
+	if !ok {
+		return
+	}
+
+	var body switchTunnelRequest
+	if !decodeJSON(w, r, &body) {
+		return
+	}
+
+	preview, err := s.tunnels.SwitchPreview(r.Context(), rec.TunnelID, body.TunnelTypeID)
+	if err != nil {
+		s.writeDomainError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, preview)
+}
+
 type fromPairingCodeRequest struct {
 	PairingCode string `json:"pairing_code"`
 }

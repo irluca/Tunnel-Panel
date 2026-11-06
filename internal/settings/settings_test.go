@@ -125,6 +125,13 @@ var additionalKeys = []string{
 	// of them an operator wants to stop hearing about is a policy, so it is a
 	// setting rather than a hardcoded exclusion list.
 	"system.ignored_interfaces",
+	// Telegram alerts: whether they are sent, and the token, chat and tunnel
+	// they use. All four are policy the operator sets, not values the code
+	// could know.
+	"notifications.telegram.enabled",
+	"notifications.telegram.bot_token",
+	"notifications.telegram.chat_id",
+	"notifications.telegram.tunnel_id",
 	// Whether the panel asks the release host about newer versions, and how
 	// long it reuses the answer. Both are policy: a server that must make no
 	// outbound connections turns the first off, and the second is what keeps
@@ -272,7 +279,7 @@ func TestEveryDefinitionIsComplete(t *testing.T) {
 		CategoryTunnel: true, CategoryAddressing: true, CategoryKeepalive: true,
 		CategoryMonitor: true, CategoryDiagnostics: true, CategoryMetrics: true,
 		CategoryDisplay: true, CategorySecurity: true, CategorySystem: true,
-		CategoryRoutes: true,
+		CategoryRoutes: true, CategoryNotifications: true,
 	}
 
 	for _, d := range Definitions() {

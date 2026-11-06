@@ -38,16 +38,17 @@ const (
 
 // Categories group settings in the UI.
 const (
-	CategoryTunnel      = "tunnel"
-	CategoryAddressing  = "addressing"
-	CategoryKeepalive   = "keepalive"
-	CategoryMonitor     = "monitor"
-	CategoryDiagnostics = "diagnostics"
-	CategoryMetrics     = "metrics"
-	CategoryRoutes      = "routes"
-	CategoryDisplay     = "display"
-	CategorySecurity    = "security"
-	CategorySystem      = "system"
+	CategoryTunnel        = "tunnel"
+	CategoryAddressing    = "addressing"
+	CategoryKeepalive     = "keepalive"
+	CategoryMonitor       = "monitor"
+	CategoryDiagnostics   = "diagnostics"
+	CategoryMetrics       = "metrics"
+	CategoryRoutes        = "routes"
+	CategoryDisplay       = "display"
+	CategorySecurity      = "security"
+	CategorySystem        = "system"
+	CategoryNotifications = "notifications"
 )
 
 // Constraints is the machine-readable validation contract for one setting.
@@ -798,6 +799,31 @@ var definitions = []Definition{
 		Default:     []any{},
 		Constraints: Constraints{JsonShape: "array", Pattern: "interface names"},
 		validate:    validateInterfaceNameList,
+	},
+	{
+		Key: "notifications.telegram.enabled", Type: KindBool, Category: CategoryNotifications,
+		Label:       i18n.N("Send Telegram alerts"),
+		Description: i18n.N("When the watchdog switches a carrier or its breaker trips, send a Telegram message to the chat below. Off until a token and a chat are configured."),
+		Default:     false,
+	},
+	{
+		Key: "notifications.telegram.bot_token", Type: KindString, Category: CategoryNotifications,
+		Label:       i18n.N("Telegram bot token"),
+		Description: i18n.N("The token BotFather gave the bot. It is a secret: it is redacted in the audit log and never shown back in full."),
+		Default:     "",
+	},
+	{
+		Key: "notifications.telegram.chat_id", Type: KindString, Category: CategoryNotifications,
+		Label:       i18n.N("Telegram chat"),
+		Description: i18n.N("The chat or channel the alerts go to: a user id, a group id, or a channel username."),
+		Default:     "",
+	},
+	{
+		Key: "notifications.telegram.tunnel_id", Type: KindInt, Category: CategoryNotifications,
+		Label:       i18n.N("Send alerts through tunnel"),
+		Description: i18n.N("The tunnel the Telegram message leaves through, by its id. Zero means the direct internet. Routing through a tunnel is what lets an alert leave when the server's own path is filtered."),
+		Default:     int64(0),
+		Constraints: Constraints{Min: f64(0)},
 	},
 	{
 		Key: "system.update_check_enabled", Type: KindBool, Category: CategorySystem,
