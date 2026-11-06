@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -103,6 +104,7 @@ func (c *IPCommand) List(ctx context.Context) ([]Link, error) {
 	for i := range links {
 		links[i].Addresses = byName[links[i].Name]
 	}
+	c.attachXfrm(ctx, links)
 	return links, nil
 }
 
@@ -129,7 +131,158 @@ func (c *IPCommand) Get(ctx context.Context, name string) (Link, error) {
 			links[0].Addresses = byName[name]
 		}
 	}
+	c.attachXfrm(ctx, links)
 	return links[0], nil
+}
+
+// xfrmUint accepts a JSON number or a 0x-prefixed hex string, because
+// iproute2 spells some xfrm fields either way.
+type xfrmUint struct {
+	Value uint32
+	Set   bool
+}
+
+func (x *xfrmUint) UnmarshalJSON(raw []byte) error {
+	x.Set = true
+	if len(raw) > 0 && raw[0] == '"' {
+		var s string
+		if err := json.Unmarshal(raw, &s); err != nil {
+			return err
+		}
+		base := 10
+		if strings.HasPrefix(s, "0x") || strings.HasPrefix(s, "0X") {
+			s, base = s[2:], 16
+		}
+		v, err := strconv.ParseUint(s, base, 32)
+		if err != nil {
+			return err
+		}
+		x.Value = uint32(v)
+		return nil
+	}
+	var v uint32
+	if err := json.Unmarshal(raw, &v); err != nil {
+		return err
+	}
+	x.Value = v
+	return nil
+}
+
+// ipXfrmState is one entry of `ip -j xfrm state`.
+type ipXfrmState struct {
+	Src   string   `json:"src"`
+	Dst   string   `json:"dst"`
+	Proto string   `json:"proto"`
+	Spi   xfrmUint `json:"spi"`
+	IfID  xfrmUint `json:"if_id"`
+}
+
+// ipXfrmPolicy is one entry of `ip -j xfrm policy`.
+type ipXfrmPolicy struct {
+	Src  string   `json:"src"`
+	Dst  string   `json:"dst"`
+	Dir  string   `json:"dir"`
+	IfID xfrmUint `json:"if_id"`
+}
+
+func (c *IPCommand) xfrmStateList(ctx context.Context) ([]ipXfrmState, error) {
+	res, err := c.run(ctx, c.Bin, "-j", "xfrm", "state")
+	if err != nil {
+		return nil, err
+	}
+	var states []ipXfrmState
+	if err := json.Unmarshal([]byte(res.Stdout), &states); err != nil {
+		return nil, fmt.Errorf("parsing ip xfrm state output: %w", err)
+	}
+	return states, nil
+}
+
+func (c *IPCommand) xfrmPolicyList(ctx context.Context) ([]ipXfrmPolicy, error) {
+	res, err := c.run(ctx, c.Bin, "-j", "xfrm", "policy")
+	if err != nil {
+		return nil, err
+	}
+	var policies []ipXfrmPolicy
+	if err := json.Unmarshal([]byte(res.Stdout), &policies); err != nil {
+		return nil, fmt.Errorf("parsing ip xfrm policy output: %w", err)
+	}
+	return policies, nil
+}
+
+// xfrmAttrsByIfID reads the kernel's XFRM states and policies through `ip`
+// once and groups them by interface identifier, so Get and List can attach
+// them to every xfrm interface in one pass.
+func (c *IPCommand) xfrmAttrsByIfID(ctx context.Context) (map[uint32]*EspAttrs, error) {
+	states, err := c.xfrmStateList(ctx)
+	if err != nil {
+		return nil, err
+	}
+	policies, err := c.xfrmPolicyList(ctx)
+	if err != nil {
+		return nil, err
+	}
+	byIfID := map[uint32]*EspAttrs{}
+	inPolicy := map[uint32]bool{}
+	outPolicy := map[uint32]bool{}
+	for _, s := range states {
+		if !s.IfID.Set || s.Proto != "esp" {
+			continue
+		}
+		a := byIfID[s.IfID.Value]
+		if a == nil {
+			a = &EspAttrs{IfID: s.IfID.Value}
+			byIfID[s.IfID.Value] = a
+		}
+		a.SPIs = append(a.SPIs, s.Spi.Value)
+	}
+	for _, p := range policies {
+		if !p.IfID.Set {
+			continue
+		}
+		if _, ok := byIfID[p.IfID.Value]; !ok {
+			byIfID[p.IfID.Value] = &EspAttrs{IfID: p.IfID.Value}
+		}
+		switch p.Dir {
+		case "in":
+			inPolicy[p.IfID.Value] = true
+		case "out":
+			outPolicy[p.IfID.Value] = true
+		}
+	}
+	for id, a := range byIfID {
+		sort.Slice(a.SPIs, func(i, j int) bool { return a.SPIs[i] < a.SPIs[j] })
+		a.PoliciesPresent = inPolicy[id] && outPolicy[id]
+	}
+	return byIfID, nil
+}
+
+// attachXfrm fills in the XFRM facts of every xfrm interface in a list.
+// It runs only when one is present, and a failure to read the associations
+// leaves the interface list standing: the tunnel then reports just its
+// identifier, and verification sees the missing associations.
+func (c *IPCommand) attachXfrm(ctx context.Context, links []Link) {
+	hasEsp := false
+	for _, l := range links {
+		if l.Kind == KindESP {
+			hasEsp = true
+			break
+		}
+	}
+	if !hasEsp {
+		return
+	}
+	byIfID, err := c.xfrmAttrsByIfID(ctx)
+	if err != nil {
+		return
+	}
+	for i := range links {
+		if links[i].Kind != KindESP || links[i].Tunnel == nil || links[i].Tunnel.Esp == nil {
+			continue
+		}
+		if a, ok := byIfID[links[i].Tunnel.Esp.IfID]; ok {
+			links[i].Tunnel.Esp = a
+		}
+	}
 }
 
 // Routes returns the IPv4 and IPv6 routing tables.
@@ -167,12 +320,84 @@ func (c *IPCommand) Statistics(ctx context.Context, name string) (Statistics, er
 
 // Create adds a tunnel interface.
 func (c *IPCommand) Create(ctx context.Context, spec TunnelSpec) error {
+	if spec.Kind == KindESP {
+		return c.createESP(ctx, spec)
+	}
 	_, err := c.run(ctx, CreateArgs(c.Bin, spec)...)
 	return err
 }
 
+// createESP builds an ESP tunnel: the interface, then the two security
+// associations and the two policies. A failure removes what was just built,
+// so the host is not left with half a tunnel.
+func (c *IPCommand) createESP(ctx context.Context, spec TunnelSpec) error {
+	if err := checkEspSpec(ctx, spec); err != nil {
+		return err
+	}
+	// Clear any leftovers from a previous attempt with this identity.
+	c.deleteESPByIfID(ctx, spec.EspIfID)
+	if _, err := c.run(ctx, CreateArgs(c.Bin, spec)...); err != nil {
+		return err
+	}
+	created := []func(){}
+	cleanup := func() {
+		for i := len(created) - 1; i >= 0; i-- {
+			created[i]()
+		}
+		_, _ = c.run(ctx, DeleteArgs(c.Bin, spec.Name)...)
+	}
+	for _, outbound := range []bool{true, false} {
+		out := outbound
+		if _, err := c.run(ctx, XfrmStateAddArgs(c.Bin, spec, out)...); err != nil {
+			cleanup()
+			return err
+		}
+		created = append(created, func() { _, _ = c.run(ctx, XfrmStateDelArgs(c.Bin, spec, out)...) })
+	}
+	for _, outbound := range []bool{true, false} {
+		out := outbound
+		if _, err := c.run(ctx, XfrmPolicyAddArgs(c.Bin, spec, out)...); err != nil {
+			cleanup()
+			return err
+		}
+		created = append(created, func() { _, _ = c.run(ctx, XfrmPolicyDelArgs(c.Bin, spec, out)...) })
+	}
+	return nil
+}
+
+// deleteESPByIfID removes every XFRM state and policy bound to an interface
+// identifier, best-effort: it runs during cleanup, where a missing
+// association is the expected state, and a failure to remove one must not
+// mask the error that triggered the cleanup.
+func (c *IPCommand) deleteESPByIfID(ctx context.Context, ifid uint32) {
+	if states, err := c.xfrmStateList(ctx); err == nil {
+		for _, s := range states {
+			if s.IfID.Set && s.IfID.Value == ifid && s.Proto == "esp" {
+				_, _ = c.run(ctx, c.Bin, "xfrm", "state", "del",
+					"src", s.Src, "dst", s.Dst, "proto", "esp",
+					"spi", "0x"+strconv.FormatUint(uint64(s.Spi.Value), 16))
+			}
+		}
+	}
+	if policies, err := c.xfrmPolicyList(ctx); err == nil {
+		for _, p := range policies {
+			if p.IfID.Set && p.IfID.Value == ifid {
+				_, _ = c.run(ctx, c.Bin, "xfrm", "policy", "del",
+					"src", p.Src, "dst", p.Dst, "dir", p.Dir,
+					"if_id", strconv.FormatUint(uint64(ifid), 10))
+			}
+		}
+	}
+}
+
 // Delete removes an interface. A device that is already gone is a success.
 func (c *IPCommand) Delete(ctx context.Context, name string) error {
+	if l, err := c.Get(ctx, name); err == nil && l.Tunnel != nil && l.Tunnel.Esp != nil {
+		// The states and policies outlive their interface; remove them
+		// first, so a later tunnel with the same identity does not trip
+		// over stale associations.
+		c.deleteESPByIfID(ctx, l.Tunnel.Esp.IfID)
+	}
 	res, err := c.run(ctx, DeleteArgs(c.Bin, name)...)
 	if err != nil && isMissingDevice(res, err) {
 		return nil
@@ -315,6 +540,7 @@ type ipTunnelData struct {
 	EncapLimit *flexInt `json:"encaplimit"`
 	TClass     string   `json:"tclass"`
 	FlowLabel  string   `json:"flowlabel"`
+	IfID       *flexInt `json:"if_id"`
 }
 
 type ipLinkInfo struct {
@@ -389,7 +615,18 @@ func parseLinks(raw []byte) ([]Link, error) {
 			if d.LinkInfo != nil && d.LinkInfo.InfoData != nil {
 				data = *d.LinkInfo.InfoData
 			}
-			l.Tunnel = tunnelAttrsFrom(data, IsIPv6Kind(l.Kind))
+			if l.Kind == KindESP {
+				// An xfrm interface reports its identifier in the link
+				// info; the associations come from `ip xfrm` (see
+				// attachXfrm), so the tunnel starts with just the identifier.
+				var ifid uint32
+				if data.IfID != nil && data.IfID.Set {
+					ifid = uint32(data.IfID.Value)
+				}
+				l.Tunnel = &TunnelAttrs{Esp: &EspAttrs{IfID: ifid}}
+			} else {
+				l.Tunnel = tunnelAttrsFrom(data, IsIPv6Kind(l.Kind))
+			}
 		}
 		out = append(out, l)
 	}
@@ -398,9 +635,13 @@ func parseLinks(raw []byte) ([]Link, error) {
 
 // normaliseKind resolves the interface type. linkinfo.info_kind is the reliable
 // source for virtual devices; link_type describes the layer-2 encapsulation and
-// is what identifies a plain NIC and the loopback.
+// is what identifies a plain NIC and the loopback. An xfrm interface is the
+// panel's ESP tunnel.
 func normaliseKind(d ipLink) string {
 	if d.LinkInfo != nil && d.LinkInfo.InfoKind != "" {
+		if d.LinkInfo.InfoKind == "xfrm" {
+			return KindESP
+		}
 		return d.LinkInfo.InfoKind
 	}
 	switch d.LinkType {

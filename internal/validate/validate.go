@@ -147,6 +147,22 @@ func validateEsp(ctx context.Context, in TunnelInput, errs *Errors, partial bool
 		errs.Add("hop_limit", CodeInvalidEspField,
 			i18n.T(ctx, "Hop limit, encapsulation limit, traffic class and flow label belong to the IPv6 GRE types."), nil)
 	}
+	// Path-MTU discovery, ignore-df and the firewall mark are GRE link
+	// attributes the xfrm interface does not carry. Neither link path can
+	// honour them on an ESP tunnel, so they are refused rather than
+	// silently dropped.
+	if in.IsPathMtuDiscovery {
+		errs.Add("is_path_mtu_discovery", CodeInvalidEspField,
+			i18n.T(ctx, "Path-MTU discovery belongs to GRE and has no meaning on an ESP tunnel."), nil)
+	}
+	if in.IsIgnoreDf {
+		errs.Add("is_ignore_df", CodeInvalidEspField,
+			i18n.T(ctx, "Ignore-df belongs to GRE and has no meaning on an ESP tunnel."), nil)
+	}
+	if in.FwMark != nil {
+		errs.Add("fwmark", CodeInvalidEspField,
+			i18n.T(ctx, "An ESP tunnel does not carry a firewall mark."), nil)
+	}
 	// The security associations live in the kernel, not in a file, so only
 	// the systemd unit — which runs the commands that create them — brings
 	// an ESP tunnel back after a reboot. Networkd can recreate the

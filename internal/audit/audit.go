@@ -100,6 +100,31 @@ type Operation struct {
 	Error      string   `json:"error,omitempty"`
 }
 
+// redactOperations scrubs secrets from recorded operations before they are
+// stored. The ESP key reaches the audit trail inside the argv of an
+// `ip xfrm state add` command, as the value following the AEAD algorithm
+// name; replacing exactly that element keeps the command readable while the
+// key never lands in the database. The netlink path never puts the key in
+// its trace detail, so only the argv needs scrubbing.
+func redactOperations(ops []Operation) []Operation {
+	out := make([]Operation, len(ops))
+	for i, op := range ops {
+		out[i] = op
+		out[i].Argv = redactXfrmKey(op.Argv)
+	}
+	return out
+}
+
+func redactXfrmKey(argv []string) []string {
+	out := append([]string(nil), argv...)
+	for i, arg := range out {
+		if arg == "rfc4106(gcm(aes))" && i+1 < len(out) {
+			out[i+1] = Redacted
+		}
+	}
+	return out
+}
+
 // Entry is one audit record awaiting a write.
 type Entry struct {
 	ActionID     int64
@@ -144,7 +169,7 @@ func (w *Writer) Write(ctx context.Context, e Entry) {
 	}
 	operationsJSON := "[]"
 	if len(e.Operations) > 0 {
-		if encoded, err := json.Marshal(e.Operations); err == nil {
+		if encoded, err := json.Marshal(redactOperations(e.Operations)); err == nil {
 			operationsJSON = string(encoded)
 		}
 	}

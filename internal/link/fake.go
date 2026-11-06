@@ -227,6 +227,9 @@ func (f *Fake) Create(ctx context.Context, spec TunnelSpec) error {
 	mtu := spec.Mtu
 	if mtu == 0 {
 		mtu = 1476 // what the kernel picks for GRE over a 1500-byte underlay
+		if spec.Kind == KindESP {
+			mtu = 1500 // an xfrm interface has no underlay to derive from
+		}
 	}
 	txqlen := 1000
 	if spec.TxQueueLength != nil {
@@ -248,6 +251,15 @@ func (f *Fake) Create(ctx context.Context, spec TunnelSpec) error {
 			HopLimit: spec.HopLimit, EncapLimit: spec.EncapLimit,
 			TrafficClass: spec.TrafficClass, FlowLabel: spec.FlowLabel,
 		},
+	}
+	if spec.Kind == KindESP {
+		// The fake records what the kernel would: the interface identifier
+		// and both associations, with both policies present.
+		l.Tunnel.Esp = &EspAttrs{
+			IfID:            spec.EspIfID,
+			SPIs:            []uint32{spec.EspSPIOut, spec.EspSPIIn},
+			PoliciesPresent: true,
+		}
 	}
 	f.links[spec.Name] = l
 	f.publish(Event{Kind: EventAdded, Link: *l})

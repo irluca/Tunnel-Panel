@@ -209,3 +209,36 @@ func TestWriteToleratesAFailedInsert(t *testing.T) {
 	var nilWriter *Writer
 	nilWriter.Write(ctx, Entry{ActionID: model.AuditActionLogin})
 }
+
+func TestRedactOperationsScrubsTheEspKey(t *testing.T) {
+	ops := []Operation{
+		{Kind: KindCommand, Argv: []string{"/sbin/ip", "link", "add", "name", "esp-a-1", "type", "xfrm", "if_id", "42"}},
+		{Kind: KindCommand, Argv: []string{"/sbin/ip", "xfrm", "state", "add",
+			"src", "203.0.113.10", "dst", "198.51.100.20", "proto", "esp", "spi", "0x12345678",
+			"mode", "transport", "aead", "rfc4106(gcm(aes))", "0xaabbccddeeff00112233445566778899aabbccdd", "128",
+			"replay-window", "32", "if_id", "42"}},
+		{Kind: KindCommand, Argv: []string{"/sbin/ip", "xfrm", "policy", "add",
+			"src", "0.0.0.0/0", "dst", "0.0.0.0/0", "dir", "out", "if_id", "42"}},
+	}
+	got := redactOperations(ops)
+	// The key is gone, but the rest of the command — including the SPI and
+	// the interface identifier — stays readable.
+	encoded, err := json.Marshal(got)
+	if err != nil {
+		t.Fatalf("marshalling the redacted operations failed: %v", err)
+	}
+	if strings.Contains(string(encoded), "aabbccddeeff00112233445566778899aabbccdd") {
+		t.Fatalf("the ESP key survived redaction: %s", encoded)
+	}
+	if !strings.Contains(string(encoded), "0x12345678") {
+		t.Fatalf("redaction removed more than the key: %s", encoded)
+	}
+	if got[1].Argv[16] != Redacted {
+		t.Fatalf("the element after the AEAD name = %q, want %q", got[1].Argv[16], Redacted)
+	}
+	// The input is not mutated: the caller's copy keeps the key, so a retry
+	// of the same command still has it.
+	if ops[1].Argv[16] != "0xaabbccddeeff00112233445566778899aabbccdd" {
+		t.Fatal("redaction mutated the caller's operations")
+	}
+}

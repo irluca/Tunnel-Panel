@@ -143,6 +143,21 @@ func FamilyOf(addr netip.Addr) string {
 	return FamilyIPv6
 }
 
+// EspAttrs are the XFRM facts of an ESP tunnel, read back from the kernel.
+// They are what verification compares the planned tunnel against: the
+// interface identifier and the security associations bound to it.
+type EspAttrs struct {
+	// IfID is the xfrm interface identifier the states and policies are
+	// bound to.
+	IfID uint32 `json:"if_id"`
+	// SPIs are the security association identifiers bound to this
+	// interface, as the kernel reports them.
+	SPIs []uint32 `json:"spis,omitempty"`
+	// PoliciesPresent reports whether both the inbound and the outbound
+	// XFRM policies bound to this interface exist.
+	PoliciesPresent bool `json:"policies_present"`
+}
+
 // TunnelAttrs are the tunnel-specific attributes of a link. Every field is
 // read back from the kernel after apply and compared against what was asked
 // for, which is how §9.3 verification catches a tunnel that came up wrong.
@@ -172,6 +187,8 @@ type TunnelAttrs struct {
 	EncapLimit   *int   `json:"encap_limit,omitempty"`
 	TrafficClass string `json:"traffic_class,omitempty"`
 	FlowLabel    string `json:"flow_label,omitempty"`
+	// Esp is set only for an xfrm interface, which the panel calls ESP.
+	Esp *EspAttrs `json:"esp,omitempty"`
 }
 
 // Statistics are the interface counters (§11.2, §13.3).

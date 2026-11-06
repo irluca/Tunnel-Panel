@@ -129,6 +129,10 @@ func (n *Netlink) Create(ctx context.Context, spec TunnelSpec) error {
 		bindIndex = uint32(dev.Attrs().Index)
 	}
 
+	if spec.Kind == KindESP {
+		return n.createESP(ctx, spec, local, remote)
+	}
+
 	iflags, oflags := greFlags(spec)
 	tos, err := parseTos(ctx, spec.Tos)
 	if err != nil {
@@ -237,6 +241,12 @@ func (n *Netlink) Delete(ctx context.Context, name string) error {
 			return nil // already gone, which is the requested end state
 		}
 		return i18n.Errorf(ctx, "looking up %s: %w", name, err)
+	}
+	if x, ok := l.(*netlink.Xfrmi); ok {
+		// The states and policies outlive their interface; remove them
+		// first, so a later tunnel with the same identity does not trip
+		// over stale associations.
+		deleteESP(ctx, x.Ifid)
 	}
 	trace(ctx, "LinkDel "+name, nil)
 	if err := netlink.LinkDel(l); err != nil {
@@ -378,10 +388,17 @@ func (n *Netlink) List(ctx context.Context) ([]Link, error) {
 	if err != nil {
 		return nil, i18n.Errorf(ctx, "listing interfaces: %w", err)
 	}
+	// A readback failure must not hide the interfaces themselves; an ESP
+	// tunnel whose associations cannot be read reports just its identifier,
+	// and verification sees the missing associations.
+	espByIfID, _ := espAttrsByIfID()
 	out := make([]Link, 0, len(links))
 	for _, l := range links {
 		converted := convertLink(l)
 		converted.Addresses = listAddresses(l)
+		if x, ok := l.(*netlink.Xfrmi); ok {
+			converted.Tunnel = &TunnelAttrs{Esp: espAttrsFor(x.Ifid, espByIfID)}
+		}
 		out = append(out, converted)
 	}
 	return out, nil
@@ -394,6 +411,10 @@ func (n *Netlink) Get(ctx context.Context, name string) (Link, error) {
 	}
 	converted := convertLink(l)
 	converted.Addresses = listAddresses(l)
+	if x, ok := l.(*netlink.Xfrmi); ok {
+		espByIfID, _ := espAttrsByIfID()
+		converted.Tunnel = &TunnelAttrs{Esp: espAttrsFor(x.Ifid, espByIfID)}
+	}
 	return converted, nil
 }
 
@@ -479,9 +500,12 @@ func convertLink(l netlink.Link) Link {
 
 // normaliseNetlinkKind maps the library's type name onto the panel's, so a
 // plain NIC is "device" and the loopback is "loopback" whichever manager
-// reported it.
+// reported it. An xfrm interface is the panel's ESP tunnel.
 func normaliseNetlinkKind(l netlink.Link) string {
 	kind := l.Type()
+	if kind == "xfrm" {
+		return KindESP
+	}
 	if kind == "device" {
 		if l.Attrs().RawFlags&unix.IFF_LOOPBACK != 0 {
 			return "loopback"

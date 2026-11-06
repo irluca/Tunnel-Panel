@@ -922,3 +922,21 @@ func TestDuplicateEspInnerPairIsRefusedInEitherDirection(t *testing.T) {
 		t.Fatalf("a differing inner subnet must not collide: %v", err)
 	}
 }
+
+func TestEspRejectsUnsupportedAttributes(t *testing.T) {
+	in := validEspInput()
+	in.IsPathMtuDiscovery = true
+	if errs := ValidateStatic(in); !errs.Has("is_path_mtu_discovery") {
+		t.Fatalf("path-MTU discovery on an ESP tunnel was accepted: %+v", errs.Fields)
+	}
+	in = validEspInput()
+	in.IsIgnoreDf = true
+	if errs := ValidateStatic(in); !errs.Has("is_ignore_df") {
+		t.Fatalf("ignore-df on an ESP tunnel was accepted: %+v", errs.Fields)
+	}
+	in = validEspInput()
+	in.FwMark = i64(42)
+	if errs := ValidateStatic(in); !errs.Has("fwmark") {
+		t.Fatalf("a firewall mark on an ESP tunnel was accepted: %+v", errs.Fields)
+	}
+}

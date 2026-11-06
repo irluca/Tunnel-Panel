@@ -1,6 +1,7 @@
 package link
 
 import (
+	"encoding/hex"
 	"strconv"
 	"strings"
 )
@@ -27,6 +28,14 @@ import (
 // Both differences were found by building the same tunnel through each path on
 // a real kernel and comparing what came back.
 func CreateArgs(ipBin string, spec TunnelSpec) []string {
+	if spec.Kind == KindESP {
+		// An xfrm interface carries no tunnel attributes of its own: the
+		// endpoints live in the security associations, and the MTU is set
+		// by its own step, as for every kind.
+		return []string{ipBin, "link", "add", "name", spec.Name, "type", "xfrm",
+			"if_id", strconv.FormatUint(uint64(spec.EspIfID), 10)}
+	}
+
 	argv := []string{ipBin, "link", "add", "name", spec.Name, "type", spec.Kind}
 
 	if spec.Local != "" {
@@ -112,6 +121,69 @@ func ttlWord(ttl int) string {
 		return "inherit"
 	}
 	return strconv.Itoa(ttl)
+}
+
+// XfrmStateAddArgs builds `ip xfrm state add` for one direction of an ESP
+// tunnel. The key is hex-encoded with a 0x prefix, as iproute2 expects, and
+// it is the one element the audit trail must never record (see audit).
+func XfrmStateAddArgs(ipBin string, spec TunnelSpec, outbound bool) []string {
+	src, dst, spi := espSA(spec, outbound)
+	return []string{
+		ipBin, "xfrm", "state", "add",
+		"src", src, "dst", dst, "proto", "esp",
+		"spi", "0x" + strconv.FormatUint(uint64(spi), 16),
+		"mode", "transport",
+		"aead", EspAeadName, "0x" + hex.EncodeToString(spec.EspKey), strconv.Itoa(EspICVLen),
+		"replay-window", strconv.Itoa(EspReplayWindow),
+		"if_id", strconv.FormatUint(uint64(spec.EspIfID), 10),
+	}
+}
+
+// XfrmStateDelArgs builds `ip xfrm state del` for one direction. The state
+// is matched by its endpoints, protocol and SPI.
+func XfrmStateDelArgs(ipBin string, spec TunnelSpec, outbound bool) []string {
+	src, dst, spi := espSA(spec, outbound)
+	return []string{
+		ipBin, "xfrm", "state", "del",
+		"src", src, "dst", dst, "proto", "esp",
+		"spi", "0x" + strconv.FormatUint(uint64(spi), 16),
+	}
+}
+
+// XfrmPolicyAddArgs builds `ip xfrm policy add` for one direction. The
+// selector is the whole IPv4 space, and the interface identifier is what
+// scopes the policy to this tunnel; the template names the association the
+// policy uses, including its SPI and request identifier.
+func XfrmPolicyAddArgs(ipBin string, spec TunnelSpec, outbound bool) []string {
+	dir := "out"
+	if !outbound {
+		dir = "in"
+	}
+	src, dst, spi := espSA(spec, outbound)
+	return []string{
+		ipBin, "xfrm", "policy", "add",
+		"src", "0.0.0.0/0", "dst", "0.0.0.0/0", "dir", dir,
+		"tmpl", "src", src, "dst", dst, "proto", "esp",
+		"spi", "0x" + strconv.FormatUint(uint64(spi), 16),
+		"mode", "transport",
+		"reqid", strconv.FormatUint(uint64(spec.EspIfID), 10),
+		"if_id", strconv.FormatUint(uint64(spec.EspIfID), 10),
+	}
+}
+
+// XfrmPolicyDelArgs builds `ip xfrm policy del` for one direction. The
+// policy is matched by its selector, direction and interface identifier;
+// templates are ignored when deleting, as in the netlink path.
+func XfrmPolicyDelArgs(ipBin string, spec TunnelSpec, outbound bool) []string {
+	dir := "out"
+	if !outbound {
+		dir = "in"
+	}
+	return []string{
+		ipBin, "xfrm", "policy", "del",
+		"src", "0.0.0.0/0", "dst", "0.0.0.0/0", "dir", dir,
+		"if_id", strconv.FormatUint(uint64(spec.EspIfID), 10),
+	}
 }
 
 // DeleteArgs builds `ip link del <name>`.

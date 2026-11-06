@@ -424,3 +424,199 @@ func TestMergeCapabilitiesAttributesEachType(t *testing.T) {
 		t.Fatalf("IP6GRE must fall to the ip command: %+v", merged[KindIP6GRE])
 	}
 }
+
+// ------------------------------------------------------------- ESP tunnels
+
+func espTestKey(t *testing.T) []byte {
+	t.Helper()
+	key, err := ParseEspKey("aabbccddeeff00112233445566778899aabbccdd")
+	if err != nil {
+		t.Fatalf("the test ESP key must parse: %v", err)
+	}
+	return key
+}
+
+func espTestSpec(t *testing.T) TunnelSpec {
+	t.Helper()
+	return TunnelSpec{
+		Name: "esp-a-1", Kind: KindESP, Local: "203.0.113.10", Remote: "198.51.100.20",
+		Mtu: 1350, EspKey: espTestKey(t),
+		EspSPIOut: 0x12345678, EspSPIIn: 0x87654321, EspIfID: 42,
+	}
+}
+
+func TestCreateArgsForEsp(t *testing.T) {
+	got := strings.Join(CreateArgs("/sbin/ip", espTestSpec(t)), " ")
+	want := "/sbin/ip link add name esp-a-1 type xfrm if_id 42"
+	if got != want {
+		t.Fatalf("ESP create argv\n got: %s\nwant: %s", got, want)
+	}
+}
+
+func TestXfrmStateAddArgs(t *testing.T) {
+	spec := espTestSpec(t)
+	key := "0xaabbccddeeff00112233445566778899aabbccdd"
+	got := strings.Join(XfrmStateAddArgs("/sbin/ip", spec, true), " ")
+	want := "/sbin/ip xfrm state add src 203.0.113.10 dst 198.51.100.20 proto esp " +
+		"spi 0x12345678 mode transport aead rfc4106(gcm(aes)) " + key + " 128 replay-window 32 if_id 42"
+	if got != want {
+		t.Fatalf("outbound state argv\n got: %s\nwant: %s", got, want)
+	}
+	got = strings.Join(XfrmStateAddArgs("/sbin/ip", spec, false), " ")
+	want = "/sbin/ip xfrm state add src 198.51.100.20 dst 203.0.113.10 proto esp " +
+		"spi 0x87654321 mode transport aead rfc4106(gcm(aes)) " + key + " 128 replay-window 32 if_id 42"
+	if got != want {
+		t.Fatalf("inbound state argv\n got: %s\nwant: %s", got, want)
+	}
+}
+
+func TestXfrmPolicyArgs(t *testing.T) {
+	spec := espTestSpec(t)
+	got := strings.Join(XfrmPolicyAddArgs("/sbin/ip", spec, true), " ")
+	want := "/sbin/ip xfrm policy add src 0.0.0.0/0 dst 0.0.0.0/0 dir out " +
+		"tmpl src 203.0.113.10 dst 198.51.100.20 proto esp spi 0x12345678 mode transport reqid 42 if_id 42"
+	if got != want {
+		t.Fatalf("outbound policy argv\n got: %s\nwant: %s", got, want)
+	}
+	got = strings.Join(XfrmPolicyAddArgs("/sbin/ip", spec, false), " ")
+	want = "/sbin/ip xfrm policy add src 0.0.0.0/0 dst 0.0.0.0/0 dir in " +
+		"tmpl src 198.51.100.20 dst 203.0.113.10 proto esp spi 0x87654321 mode transport reqid 42 if_id 42"
+	if got != want {
+		t.Fatalf("inbound policy argv\n got: %s\nwant: %s", got, want)
+	}
+	got = strings.Join(XfrmPolicyDelArgs("/sbin/ip", spec, true), " ")
+	want = "/sbin/ip xfrm policy del src 0.0.0.0/0 dst 0.0.0.0/0 dir out if_id 42"
+	if got != want {
+		t.Fatalf("policy delete argv\n got: %s\nwant: %s", got, want)
+	}
+}
+
+func TestFakeEspCreateRecordsAssociations(t *testing.T) {
+	f := NewFake()
+	spec := espTestSpec(t)
+	if err := f.Create(context.Background(), spec); err != nil {
+		t.Fatalf("fake ESP create failed: %v", err)
+	}
+	got, err := f.Get(context.Background(), "esp-a-1")
+	if err != nil {
+		t.Fatalf("fake ESP get failed: %v", err)
+	}
+	if got.Kind != KindESP {
+		t.Fatalf("fake link kind = %q, want %q", got.Kind, KindESP)
+	}
+	if got.Tunnel == nil || got.Tunnel.Esp == nil {
+		t.Fatal("the fake did not record the ESP associations")
+	}
+	esp := got.Tunnel.Esp
+	if esp.IfID != 42 {
+		t.Fatalf("IfID = %d, want 42", esp.IfID)
+	}
+	if len(esp.SPIs) != 2 || esp.SPIs[0] != 0x12345678 || esp.SPIs[1] != 0x87654321 {
+		t.Fatalf("SPIs = %v, want [0x12345678 0x87654321]", esp.SPIs)
+	}
+	if !esp.PoliciesPresent {
+		t.Fatal("the fake must report both policies present")
+	}
+}
+
+// The fixture is the shape `ip -j -d link show` reports for an xfrm
+// interface: the kind in linkinfo, the identifier in its info_data.
+const verifiedXfrmLinkJSON = `[{"ifindex":7,"ifname":"esp-a-1","flags":["POINTOPOINT","NOARP","UP"],` +
+	`"mtu":1350,"operstate":"UNKNOWN","txqlen":1000,` +
+	`"linkinfo":{"info_kind":"xfrm","info_data":{"if_id":42}}}]`
+
+func TestParseLinksXfrm(t *testing.T) {
+	links, err := parseLinks([]byte(verifiedXfrmLinkJSON))
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	if len(links) != 1 {
+		t.Fatalf("links = %+v", links)
+	}
+	if links[0].Kind != KindESP {
+		t.Fatalf("kind = %q, want %q", links[0].Kind, KindESP)
+	}
+	if links[0].Tunnel == nil || links[0].Tunnel.Esp == nil {
+		t.Fatal("an xfrm interface must carry ESP attributes")
+	}
+	if links[0].Tunnel.Esp.IfID != 42 {
+		t.Fatalf("IfID = %d, want 42", links[0].Tunnel.Esp.IfID)
+	}
+}
+
+func TestIPCommandXfrmAttrs(t *testing.T) {
+	runner := exec.NewFakeRunner()
+	runner.Responses["/sbin/ip -j -d -s link show"] = exec.Result{Stdout: verifiedXfrmLinkJSON}
+	runner.Responses["/sbin/ip -j addr show"] = exec.Result{Stdout: `[]`}
+	runner.Responses["/sbin/ip -j xfrm state"] = exec.Result{Stdout: `[
+		{"src":"203.0.113.10","dst":"198.51.100.20","proto":"esp","spi":305419896,"reqid":42,"mode":"transport","if_id":42},
+		{"src":"198.51.100.20","dst":"203.0.113.10","proto":"esp","spi":2271560481,"reqid":42,"mode":"transport","if_id":42}]`}
+	runner.Responses["/sbin/ip -j xfrm policy"] = exec.Result{Stdout: `[
+		{"src":"0.0.0.0/0","dst":"0.0.0.0/0","dir":"out","if_id":42},
+		{"src":"0.0.0.0/0","dst":"0.0.0.0/0","dir":"in","if_id":42}]`}
+
+	m := NewIPCommand("/sbin/ip", runner)
+	links, err := m.List(context.Background())
+	if err != nil {
+		t.Fatalf("list failed: %v", err)
+	}
+	if len(links) != 1 {
+		t.Fatalf("links = %+v", links)
+	}
+	esp := links[0].Tunnel.Esp
+	if esp == nil {
+		t.Fatal("the list did not attach the XFRM facts")
+	}
+	if esp.IfID != 42 {
+		t.Fatalf("IfID = %d, want 42", esp.IfID)
+	}
+	if len(esp.SPIs) != 2 || esp.SPIs[0] != 0x12345678 || esp.SPIs[1] != 0x87654321 {
+		t.Fatalf("SPIs = %v, want [0x12345678 0x87654321]", esp.SPIs)
+	}
+	if !esp.PoliciesPresent {
+		t.Fatal("both policies are present in the fixture, so PoliciesPresent must be true")
+	}
+}
+
+func TestIPCommandEspCreateRunsTheWholeSequence(t *testing.T) {
+	runner := exec.NewFakeRunner()
+	runner.Responses["/sbin/ip -j xfrm state"] = exec.Result{Stdout: `[]`}
+	runner.Responses["/sbin/ip -j xfrm policy"] = exec.Result{Stdout: `[]`}
+
+	m := NewIPCommand("/sbin/ip", runner)
+	if err := m.Create(context.Background(), espTestSpec(t)); err != nil {
+		t.Fatalf("ESP create failed: %v", err)
+	}
+	key := "0xaabbccddeeff00112233445566778899aabbccdd"
+	want := []string{
+		"/sbin/ip -j xfrm state",
+		"/sbin/ip -j xfrm policy",
+		"/sbin/ip link add name esp-a-1 type xfrm if_id 42",
+		"/sbin/ip xfrm state add src 203.0.113.10 dst 198.51.100.20 proto esp spi 0x12345678 mode transport aead rfc4106(gcm(aes)) " + key + " 128 replay-window 32 if_id 42",
+		"/sbin/ip xfrm state add src 198.51.100.20 dst 203.0.113.10 proto esp spi 0x87654321 mode transport aead rfc4106(gcm(aes)) " + key + " 128 replay-window 32 if_id 42",
+		"/sbin/ip xfrm policy add src 0.0.0.0/0 dst 0.0.0.0/0 dir out tmpl src 203.0.113.10 dst 198.51.100.20 proto esp spi 0x12345678 mode transport reqid 42 if_id 42",
+		"/sbin/ip xfrm policy add src 0.0.0.0/0 dst 0.0.0.0/0 dir in tmpl src 198.51.100.20 dst 203.0.113.10 proto esp spi 0x87654321 mode transport reqid 42 if_id 42",
+	}
+	if got := runner.CommandLines(); len(got) != len(want) {
+		t.Fatalf("ran %d commands, want %d:\n%v", len(got), len(want), got)
+	} else {
+		for i := range want {
+			if got[i] != want[i] {
+				t.Fatalf("command %d\n got: %s\nwant: %s", i, got[i], want[i])
+			}
+		}
+	}
+}
+
+func TestIPCommandEspCreateWithoutAKeyFailsBeforeAnyCommand(t *testing.T) {
+	runner := exec.NewFakeRunner()
+	spec := espTestSpec(t)
+	spec.EspKey = nil
+	m := NewIPCommand("/sbin/ip", runner)
+	if err := m.Create(context.Background(), spec); err == nil {
+		t.Fatal("an ESP tunnel with no key must not be created")
+	}
+	if got := runner.CommandLines(); len(got) != 0 {
+		t.Fatalf("a rejected specification still ran %d commands: %v", len(got), got)
+	}
+}

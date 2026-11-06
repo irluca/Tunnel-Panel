@@ -1,6 +1,7 @@
 package link
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/binary"
@@ -8,6 +9,8 @@ import (
 	"fmt"
 	"net/netip"
 	"strings"
+
+	"github.com/drs/gre-panel/internal/i18n"
 )
 
 // ESP tunnel identity.
@@ -44,6 +47,10 @@ const EspAeadKeyHexLength = EspAeadKeyBytes * 2 // 40
 
 // EspICVLen is the integrity check value length in bits.
 const EspICVLen = 128
+
+// EspReplayWindow is the anti-replay window size of a new security
+// association, in packets.
+const EspReplayWindow = 32
 
 // EspIdentity is everything the SPI derivation needs: the outer endpoints
 // and the inner address pair, each as the two ends see them.
@@ -144,4 +151,38 @@ func EspIfID(local, remote, name string) uint32 {
 		v = 1
 	}
 	return v
+}
+
+// espSA returns the source, destination and SPI of one direction's security
+// association, from the perspective of the host creating it. The outbound
+// association carries traffic to the remote endpoint; the inbound one receives
+// traffic from it.
+func espSA(spec TunnelSpec, outbound bool) (src, dst string, spi uint32) {
+	if outbound {
+		return spec.Local, spec.Remote, spec.EspSPIOut
+	}
+	return spec.Remote, spec.Local, spec.EspSPIIn
+}
+
+// checkEspSpec verifies that a specification carries everything the link
+// layer needs to build an ESP tunnel. The service and validation layers
+// normally guarantee this; a stored or adopted record that lost its key
+// still reaches this check, so it must fail here rather than build a
+// half-formed tunnel.
+func checkEspSpec(ctx context.Context, spec TunnelSpec) error {
+	switch {
+	case len(spec.EspKey) != EspAeadKeyBytes:
+		return i18n.Errorf(ctx, "an ESP tunnel needs a %d-byte key", EspAeadKeyBytes)
+	case spec.EspSPIOut == 0 || spec.EspSPIIn == 0:
+		return i18n.Errorf(ctx, "an ESP tunnel needs both security association identifiers")
+	case spec.EspIfID == 0:
+		return i18n.Errorf(ctx, "an ESP tunnel needs an interface identifier")
+	case spec.FwMark != nil:
+		return i18n.Errorf(ctx, "an ESP tunnel does not carry a firewall mark")
+	case spec.IsIgnoreDf:
+		return i18n.Errorf(ctx, "an ESP tunnel does not carry an ignore-df flag")
+	case spec.IsPathMtuDiscovery:
+		return i18n.Errorf(ctx, "an ESP tunnel does not carry a path-MTU-discovery flag")
+	}
+	return nil
 }
