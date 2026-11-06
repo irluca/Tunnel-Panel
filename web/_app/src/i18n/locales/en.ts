@@ -634,6 +634,17 @@ export default {
     createFromCode: 'Create this tunnel',
   },
 
+  switch: {
+    title: 'Switch carrier · {{name}}',
+    button: 'Switch carrier',
+    dialogTitle: 'Switch carrier',
+    dialogBody: '{{name}} currently runs on {{from}}. Switching rebuilds it on {{to}}.',
+    warning: 'The tunnel drops briefly while it is rebuilt. If the new carrier does not verify, the previous one comes back automatically — and the far end must switch the same way, or the tunnel stays one-sided.',
+    confirm: 'Switch to {{to}}',
+    doneBody: 'The tunnel now runs on {{to}}. Give the far end this code so it can switch too.',
+    peerBody: 'The far end needs the same switch. Without this code it cannot.',
+  },
+
   deleteDialog: {
     title: 'Delete {{name}}?',
     body: 'This cannot be undone. The following will be removed from this server:',

@@ -391,6 +391,10 @@ func tunnelInputOf(rec tunnel.Record) validate.TunnelInput {
 		Mtu:               rec.Mtu,
 		IKey:              rec.IKey,
 		OKey:              rec.OKey,
+		// Carried across like the GRE keys: without it a PATCH that does not
+		// mention the key would rewrite it to NULL, and the tunnel would lose
+		// the secret its peer still holds.
+		EspKey: rec.EspKey,
 
 		HasInputChecksum:  rec.HasInputChecksum,
 		HasOutputChecksum: rec.HasOutputChecksum,
@@ -450,6 +454,29 @@ func (s *Server) handlePairingCode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	payload, err := s.pairingPayloadFor(r.Context(), rec)
+	if err != nil {
+		s.writeDomainError(w, r, err)
+		return
+	}
+
+	code, err := pairing.Encode(payload)
+	if err != nil {
+		s.writeDomainError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"pairing_code": code,
+		"summary":      payload.Summarise(),
+		"note": i18n.T(r.Context(), "This code is configuration, not a credential. It carries the GRE "+
+			"key, which is not a security boundary, but it describes a specific pair of hosts and should "+
+			"not be posted publicly."),
+	})
+}
+
+// pairingPayloadFor builds the pairing payload for a tunnel: everything the
+// far end needs to build the mirror image, including the shared secret.
+func (s *Server) pairingPayloadFor(ctx context.Context, rec tunnel.Record) (pairing.Payload, error) {
 	payload := pairing.Payload{
 		TunnelTypeID:    rec.TunnelTypeID,
 		TunnelSideID:    rec.TunnelSideID,
@@ -480,7 +507,7 @@ func (s *Server) handlePairingCode(w http.ResponseWriter, r *http.Request) {
 	// server's database, and the far end has its own numbering. The range is
 	// what identifies the same pool there, or describes the one to create.
 	if rec.AddressPoolID != nil {
-		if pool, err := s.tunnels.Repo().PoolByID(r.Context(), *rec.AddressPoolID); err == nil {
+		if pool, err := s.tunnels.Repo().PoolByID(ctx, *rec.AddressPoolID); err == nil {
 			payload.AddressPoolCidr = pool.Cidr
 			payload.AddressPoolTitle = pool.Title
 			payload.AddressPoolPrefixLength = pool.PrefixLength
@@ -502,18 +529,57 @@ func (s *Server) handlePairingCode(w http.ResponseWriter, r *http.Request) {
 			PrefixLength: int(a.PrefixLength), IsPrimary: a.IsPrimary,
 		})
 	}
+	return payload, nil
+}
 
+type switchTunnelRequest struct {
+	TunnelTypeID int64   `json:"tunnel_type_id"`
+	EspKey       *string `json:"esp_key,omitempty"`
+}
+
+// handleSwitchTunnel changes only the carrier of a tunnel — GRE to ESP or
+// ESP to GRE — and returns the pairing code for the new carrier, so the
+// operator can give the far end what it needs to follow (§14).
+func (s *Server) handleSwitchTunnel(w http.ResponseWriter, r *http.Request) {
+	start := time.Now()
+	rec, ok := s.tunnelFromPath(w, r)
+	if !ok {
+		return
+	}
+
+	var body switchTunnelRequest
+	if !decodeJSON(w, r, &body) {
+		return
+	}
+
+	result, err := s.tunnels.Switch(r.Context(), rec.TunnelID, body.TunnelTypeID, body.EspKey, ClientIP(r))
+	if err != nil {
+		s.auditTunnel(r, model.AuditActionTunnelUpdate, rec.InterfaceName, body, nil, err, start)
+		s.writeDomainError(w, r, err)
+		return
+	}
+
+	// The new carrier's key travels in the pairing code: the operator gives
+	// it to the far end, which switches the same way.
+	payload, err := s.pairingPayloadFor(r.Context(), result.Tunnel)
+	if err != nil {
+		s.writeDomainError(w, r, err)
+		return
+	}
 	code, err := pairing.Encode(payload)
 	if err != nil {
 		s.writeDomainError(w, r, err)
 		return
 	}
+
+	s.auditTunnel(r, model.AuditActionTunnelUpdate, rec.InterfaceName, body, result.Operations, nil, start)
 	writeJSON(w, http.StatusOK, map[string]any{
+		"tunnel":       result.Tunnel,
+		"plan":         result.Plan,
+		"verification": result.Verify,
+		"warnings":     warningsOf(result.Warnings),
 		"pairing_code": code,
 		"summary":      payload.Summarise(),
-		"note": i18n.T(r.Context(), "This code is configuration, not a credential. It carries the GRE "+
-			"key, which is not a security boundary, but it describes a specific pair of hosts and should "+
-			"not be posted publicly."),
 	})
 }
 

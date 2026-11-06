@@ -39,6 +39,7 @@ var routeDescriptions = map[string]routeSummary{
 	"POST /api/v1/tunnels/{id}/down":         {"Take a tunnel down", "Leaves the interface in place and stops it returning after a reboot.", "tunnels"},
 	"POST /api/v1/tunnels/{id}/restart":      {"Restart a tunnel", "", "tunnels"},
 	"POST /api/v1/tunnels/{id}/reapply":      {"Reapply a tunnel from its stored state", "The remedy for drift.", "tunnels"},
+	"POST /api/v1/tunnels/{id}/switch":       {"Switch a tunnel's carrier", "Changes only the carrier — GRE to ESP or ESP to GRE — and rolls back to the previous carrier if the new one does not verify. Returns the pairing code for the new carrier.", "tunnels"},
 	"GET /api/v1/tunnels/{id}/addresses":     {"A tunnel's addresses", "", "tunnels"},
 	"POST /api/v1/tunnels/{id}/addresses":    {"Add an address", "Goes through the ordinary update pipeline, so it is validated, applied and verified.", "tunnels"},
 	"DELETE /api/v1/tunnels/{id}/addresses":  {"Remove an address", "", "tunnels"},

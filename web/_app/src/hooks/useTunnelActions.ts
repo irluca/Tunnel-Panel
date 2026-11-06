@@ -3,7 +3,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 
 import { ApiError, api } from '@/lib/api'
-import type { ActionResponse, DeleteReport, VerifyReport } from '@/lib/types'
+import type { ActionResponse, DeleteReport, Plan, Tunnel, VerifyReport, Warning } from '@/lib/types'
 import { useToast } from '@/providers/ToastProvider'
 import { describeError } from '@/components/ui/feedback'
 
@@ -15,6 +15,11 @@ export interface ActionState {
   run: (tunnelId: number, action: TunnelAction, name: string) => Promise<boolean>
   remove: (tunnelId: number, name: string, options: DeleteOptions) => Promise<boolean>
   setMonitoring: (tunnelId: number, enabled: boolean, name: string) => Promise<boolean>
+  switchCarrier: (tunnelId: number, targetTypeId: number, name: string) => Promise<SwitchResult | null>
+}
+
+export interface SwitchResult {
+  pairingCode: string
 }
 
 export interface DeleteOptions {
@@ -140,7 +145,59 @@ export function useTunnelActions(): ActionState {
     [invalidate, t, toast],
   )
 
-  return { pending, run, remove, setMonitoring }
+  // Switching carriers. Returns the pairing code for the new carrier, so the
+  // operator can give the far end what it needs to follow — without it the
+  // far end cannot switch, and the tunnel stays one-sided.
+  const switchCarrier = useCallback(
+    async (tunnelId: number, targetTypeId: number, name: string) => {
+      setPending(tunnelId)
+      try {
+        const result = await api.post<SwitchResponse>(`/tunnels/${tunnelId}/switch`, {
+          tunnel_type_id: targetTypeId,
+        })
+        await invalidate()
+
+        if (!verificationPassed(result.verification)) {
+          toast({
+            tone: 'error',
+            title: t('switch.title', { name }),
+            description: verificationFailures(result.verification).join(' · ') || t('errors.title'),
+          })
+          return null
+        }
+
+        const warnings = (result.warnings ?? []).map((warning) => warning.message).join(' · ')
+        toast({
+          tone: warnings ? 'info' : 'success',
+          title: t('switch.title', { name }),
+          description: warnings || undefined,
+          fromServer: Boolean(warnings),
+        })
+        return { pairingCode: result.pairing_code }
+      } catch (error) {
+        toast({
+          tone: 'error',
+          title: t('switch.title', { name }),
+          description: describeError(error, t).message,
+        })
+        return null
+      } finally {
+        setPending(null)
+      }
+    },
+    [invalidate, t, toast],
+  )
+
+  return { pending, run, remove, setMonitoring, switchCarrier }
+}
+
+export interface SwitchResponse {
+  tunnel: Tunnel
+  plan: Plan
+  verification: VerifyReport
+  warnings: Warning[]
+  pairing_code: string
+  summary: unknown
 }
 
 /**

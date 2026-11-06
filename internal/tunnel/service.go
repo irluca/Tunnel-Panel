@@ -682,6 +682,19 @@ func (s *Service) prepareUpdate(ctx context.Context, current Record, req Request
 	if err := s.ApplyDefaults(ctx, &in); err != nil {
 		return Record{}, validate.Result{}, nil, err
 	}
+	// A switch to ESP needs a shared secret, and ApplyDefaults generates one
+	// only on creation: on an ordinary update the stored key stands, but a
+	// GRE tunnel has no stored ESP key. So a switch that supplies none gets a
+	// fresh one here, and the operator gives it to the far end.
+	if in.TunnelTypeID == model.TunnelTypeESP && current.TunnelTypeID != model.TunnelTypeESP {
+		if in.EspKey == nil || strings.TrimSpace(*in.EspKey) == "" {
+			key, err := link.GenerateEspKey()
+			if err != nil {
+				return Record{}, validate.Result{}, nil, err
+			}
+			in.EspKey = &key
+		}
+	}
 
 	result, err := s.validator.Validate(ctx, in)
 	if err != nil {
@@ -816,6 +829,15 @@ func (s *Service) Update(ctx context.Context, id int64, req Request) (Result, er
 
 	result, err := s.run(ctx, stored, plan, req, trace)
 	if err != nil {
+		// A failed rebuild must not leave the database describing a tunnel
+		// the host does not run: the record already says the new carrier,
+		// while the rollback — if it ran — put the old one back. Restore the
+		// predecessor's record, then prove it is actually there. A rollback
+		// whose steps ran but whose tunnel never came back is not a recovery,
+		// it is the inconsistency the operator must be told about.
+		if plan.RequiresRecreate {
+			return Result{}, s.restorePredecessor(ctx, current, stored, err)
+		}
 		return Result{}, err
 	}
 	result.Warnings = append(validation.Warnings, result.Warnings...)
@@ -880,6 +902,10 @@ func mergedInput(rec Record) validate.TunnelInput {
 		Mtu:               rec.Mtu,
 		IKey:              rec.IKey,
 		OKey:              rec.OKey,
+		// Carried across like the GRE keys: without it an unrelated edit
+		// would rewrite the ESP key to NULL and the tunnel would lose the
+		// secret its peer still holds.
+		EspKey: rec.EspKey,
 
 		HasInputChecksum:  rec.HasInputChecksum,
 		HasOutputChecksum: rec.HasOutputChecksum,
@@ -915,6 +941,52 @@ func mergedInput(rec Record) validate.TunnelInput {
 		})
 	}
 	return in
+}
+
+// Switch changes only the carrier of a tunnel — GRE to ESP or ESP to GRE —
+// keeping its endpoints, addresses and persistence. The operator confirms
+// the rebuild by asking for the switch. Switching to ESP takes the key the
+// request supplies, or a fresh one is generated (see prepareUpdate);
+// switching to GRE takes the panel's default key, since the tunnel's own GRE
+// keys were lost when it became ESP.
+func (s *Service) Switch(ctx context.Context, id int64, targetTypeID int64, espKey *string, clientIP string) (Result, error) {
+	current, err := s.repo.ByID(ctx, id)
+	if err != nil {
+		return Result{}, err
+	}
+	if current.TunnelTypeID == targetTypeID {
+		return Result{}, i18n.Errorf(ctx, "the tunnel is already %s", model.TunnelTypeKind(targetTypeID))
+	}
+	if targetTypeID != model.TunnelTypeGRE && targetTypeID != model.TunnelTypeESP {
+		return Result{}, i18n.Errorf(ctx, "switching is only between GRE and ESP")
+	}
+	in := mergedInput(current)
+	in.TunnelTypeID = targetTypeID
+	// A templated name re-renders for the new carrier (gre-a-1 becomes
+	// esp-a-1); a name the operator chose by hand stays theirs.
+	if current.IsNameTemplated {
+		in.InterfaceName = ""
+	}
+	if targetTypeID == model.TunnelTypeESP {
+		in.IKey = nil
+		in.OKey = nil
+		in.EspKey = espKey
+	} else {
+		in.EspKey = nil
+		in.IKey = nil
+		in.OKey = nil
+		if key := s.settings.IntPtr("tunnel.default_key"); key != nil {
+			value := *key
+			in.IKey = &value
+			second := *key
+			in.OKey = &second
+		}
+	}
+	return s.Update(ctx, id, Request{
+		TunnelInput:     in,
+		ConfirmRecreate: true,
+		ClientIP:        clientIP,
+	})
 }
 
 // ---------------------------------------------------------------- delete
@@ -1188,6 +1260,43 @@ func (s *Service) run(ctx context.Context, rec Record, plan Plan, req Request, t
 		RolledBack: true,
 		lang:       i18n.Language(ctx),
 	}
+}
+
+// restorePredecessor runs after a rebuild failed. The record already says the
+// new carrier while the host — if the rollback ran — has the old one, so the
+// record is put back first, and then the predecessor is verified rather than
+// assumed: a rollback whose steps ran but whose tunnel never came back is not
+// a recovery, it is the inconsistency the operator must be told about.
+func (s *Service) restorePredecessor(ctx context.Context, current, stored Record, applyErr error) error {
+	if err := s.repo.Update(ctx, stored.TunnelID, mergedInput(current), current.IsNameTemplated); err != nil {
+		// The record itself could not be restored, so the database and the
+		// host now disagree and there is nothing honest to report but that.
+		_ = s.repo.SetApplyStatus(ctx, stored.TunnelID, model.ApplyStatusInconsistent, applyErr)
+		return &InconsistentError{
+			Interface:     current.InterfaceName,
+			TunnelID:      stored.TunnelID,
+			ApplyError:    applyErr.Error(),
+			RollbackError: i18n.T(ctx, "the predecessor's record could not be restored: %s", err),
+			Remediation:   s.remediation(current),
+			lang:          i18n.Language(ctx),
+		}
+	}
+	report := s.Verify(ctx, current)
+	if !report.Ok {
+		_ = s.repo.SetApplyStatus(ctx, stored.TunnelID, model.ApplyStatusInconsistent, applyErr)
+		return &InconsistentError{
+			Interface:  current.InterfaceName,
+			TunnelID:   stored.TunnelID,
+			ApplyError: applyErr.Error(),
+			RollbackError: i18n.T(ctx, "the rollback ran but the previous tunnel did not come back: %s",
+				strings.Join(report.Failures, clauseSeparator(i18n.Language(ctx)))),
+			Remediation: s.remediation(current),
+			lang:        i18n.Language(ctx),
+		}
+	}
+	// The old tunnel is back and the record says so again.
+	_ = s.repo.SetApplyStatus(ctx, stored.TunnelID, model.ApplyStatusApplied, nil)
+	return applyErr
 }
 
 // guardPlan applies the §17 invariants to every step of a plan, immediately

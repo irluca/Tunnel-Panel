@@ -253,6 +253,46 @@ func TestUpAndDownAndReapply(t *testing.T) {
 	}
 }
 
+func TestSwitchCarrier(t *testing.T) {
+	h := newHarness(t, testWebPath)
+	c, api := session(t, h)
+	id := tunnelID(t, createTunnel(t, c, api, nil))
+
+	// GRE -> ESP, with the pairing code for the new carrier in the response.
+	resp, body := c.request(http.MethodPost, api+"/tunnels/"+id+"/switch", map[string]any{"tunnel_type_id": model.TunnelTypeESP})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("POST /tunnels/%s/switch = %d\nbody: %s", id, resp.StatusCode, body)
+	}
+	var out struct {
+		Tunnel struct {
+			TunnelTypeID  int64  `json:"tunnel_type_id"`
+			InterfaceName string `json:"interface_name"`
+		} `json:"tunnel"`
+		Verification struct {
+			Ok bool `json:"ok"`
+		} `json:"verification"`
+		PairingCode string `json:"pairing_code"`
+	}
+	if err := json.Unmarshal(body, &out); err != nil {
+		t.Fatal(err)
+	}
+	if out.Tunnel.TunnelTypeID != model.TunnelTypeESP || out.Tunnel.InterfaceName != "esp-a-1" {
+		t.Fatalf("the tunnel did not switch: %+v", out.Tunnel)
+	}
+	if !out.Verification.Ok {
+		t.Fatalf("the switch did not verify: %s", body)
+	}
+	if out.PairingCode == "" {
+		t.Fatal("no pairing code was returned for the new carrier")
+	}
+
+	// Switching to the carrier it already has is refused.
+	resp, body = c.request(http.MethodPost, api+"/tunnels/"+id+"/switch", map[string]any{"tunnel_type_id": model.TunnelTypeESP})
+	if resp.StatusCode == http.StatusOK {
+		t.Fatalf("switching to the same carrier was accepted: %s", body)
+	}
+}
+
 func TestUpdateRequiresConfirmationForARebuild(t *testing.T) {
 	h := newHarness(t, testWebPath)
 	c, api := session(t, h)

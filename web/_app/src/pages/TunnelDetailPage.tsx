@@ -2,13 +2,14 @@ import { useState } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { useQuery } from '@tanstack/react-query'
-import { ArrowLeft, Pencil, RefreshCw, Trash2 } from 'lucide-react'
+import { ArrowLeft, ArrowLeftRight, Pencil, RefreshCw, Trash2 } from 'lucide-react'
 
 import { api } from '@/lib/api'
 import {
   MonitorState,
   PersistenceType,
   TunnelSide,
+  TunnelType,
   type AuditResponse,
   type MonitorHistoryResponse,
   type MonitorStatusResponse,
@@ -36,6 +37,7 @@ import { DiagnosticRuns, DiagnosticsPanel } from '@/components/tunnels/Diagnosti
 import { TunnelFormDialog } from '@/components/tunnels/TunnelFormDialog'
 import { DeleteTunnelDialog } from '@/components/tunnels/DeleteTunnelDialog'
 import { PairingCodeDialog } from '@/components/tunnels/PairingDialogs'
+import { SwitchCarrierDialog } from '@/components/tunnels/SwitchCarrierDialog'
 import { TunnelRoutesCard } from '@/components/routes/TunnelRoutesCard'
 import { QuotaRow, tunnelQuota, useQuotaStatuses } from '@/components/quota/TrafficLimit'
 import { useDocumentTitle } from '@/hooks/useDocumentTitle'
@@ -63,6 +65,7 @@ export default function TunnelDetailPage() {
   const [editing, setEditing] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [pairing, setPairing] = useState(false)
+  const [switching, setSwitching] = useState(false)
 
   const actions = useTunnelActions()
   const { calendar, digits, language } = usePreferences()
@@ -169,6 +172,12 @@ export default function TunnelDetailPage() {
           <Button variant="secondary" size="sm" onClick={() => setPairing(true)}>
             {t('actions.copyPairingCode')}
           </Button>
+          {(tunnel.tunnel_type_id === TunnelType.GRE || tunnel.tunnel_type_id === TunnelType.ESP) ? (
+            <Button variant="secondary" size="sm" onClick={() => setSwitching(true)}>
+              <ArrowLeftRight className="size-4" aria-hidden="true" />
+              {t('switch.button')}
+            </Button>
+          ) : null}
           <Button variant="dangerOutline" size="sm" onClick={() => setDeleting(true)}>
             <Trash2 className="size-4" aria-hidden="true" />
             {t('actions.delete')}
@@ -376,6 +385,7 @@ export default function TunnelDetailPage() {
         onDeleted={() => navigate('/tunnels')}
       />
       <PairingCodeDialog tunnelId={tunnelId} open={pairing} onOpenChange={setPairing} />
+      <SwitchCarrierDialog tunnel={tunnel} open={switching} onOpenChange={setSwitching} />
     </div>
   )
 }

@@ -832,8 +832,15 @@ func (p *planner) PlanUpdate(ctx context.Context, current Record, desired Record
 		teardown := p.PlanDelete(ctx, current, keepalive.Enabled, takeover)
 		plan.Steps = append(teardown.Steps, plan.Steps...)
 
+		// The rollback must also clear the new carrier's remains: a create that
+		// failed after writing its unit would otherwise leave a second tunnel
+		// behind, and on the next reboot it would come up alongside the restored
+		// one with the same addresses. Deleting what the new tunnel would have
+		// owned is tolerated when it was never created, so this is safe when the
+		// failure came before any of it existed.
+		cleanup := p.PlanDelete(ctx, desired, keepalive.Enabled, takeover)
 		restore := p.PlanCreate(ctx, current, keepalive, takeover)
-		plan.Rollback = append(plan.Rollback, restore.Steps...)
+		plan.Rollback = append(plan.Rollback, append(cleanup.Steps, restore.Steps...)...)
 		return plan
 	}
 

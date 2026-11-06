@@ -330,6 +330,37 @@ func TestCreateESPAppliesVerifiesAndPersists(t *testing.T) {
 	}
 }
 
+// An unrelated edit to an ESP tunnel must not lose its key: the record
+// carries the secret the peer still holds, and rewriting it to NULL would
+// leave the tunnel unable to authenticate.
+func TestUpdateOfAnESPTunnelKeepsItsKey(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+
+	created := h.mustCreate(t, espRequest())
+	key := created.Tunnel.EspKey
+	if key == nil || *key == "" {
+		t.Fatal("the created ESP tunnel has no key")
+	}
+
+	update := mergedInput(created.Tunnel)
+	update.Mtu = 1300
+	result, err := h.service.Update(ctx, created.Tunnel.TunnelID, Request{TunnelInput: update})
+	if err != nil {
+		t.Fatalf("updating the MTU failed: %v", err)
+	}
+	if result.Tunnel.EspKey == nil || *result.Tunnel.EspKey != *key {
+		t.Fatalf("the update lost the ESP key: %v", result.Tunnel.EspKey)
+	}
+	stored, err := h.repo.ByID(ctx, created.Tunnel.TunnelID)
+	if err != nil {
+		t.Fatalf("reading the tunnel failed: %v", err)
+	}
+	if stored.EspKey == nil || *stored.EspKey != *key {
+		t.Fatalf("the stored ESP key changed: %v", stored.EspKey)
+	}
+}
+
 // A unit that starts but never creates the security associations must be
 // caught by verification: an xfrm interface with no associations carries no
 // traffic, and reporting it as a tunnel would be the zombie state.
@@ -357,6 +388,144 @@ func TestVerificationCatchesAnESPUnitWithoutAssociations(t *testing.T) {
 	}
 	if persist.Exists(h.unitPath("esp-a-1")) {
 		t.Fatal("the rollback left the unit file behind")
+	}
+}
+
+// ---------------------------------------------------------------- switch
+
+// Switching carriers keeps the endpoints and addresses and changes only the
+// carrier — and the name, which is rendered from the template for the new
+// carrier.
+func TestSwitchGreToEsp(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+
+	created := h.mustCreate(t, request())
+	if created.Tunnel.InterfaceName != "gre-a-1" {
+		t.Fatalf("the tunnel is named %q", created.Tunnel.InterfaceName)
+	}
+
+	result, err := h.service.Switch(ctx, created.Tunnel.TunnelID, model.TunnelTypeESP, nil, "")
+	if err != nil {
+		t.Fatalf("switching to ESP failed: %v", err)
+	}
+	rec := result.Tunnel
+	if rec.TunnelTypeID != model.TunnelTypeESP {
+		t.Fatalf("the tunnel is type %d, want ESP", rec.TunnelTypeID)
+	}
+	if rec.InterfaceName != "esp-a-1" {
+		t.Fatalf("the tunnel is named %q, want esp-a-1", rec.InterfaceName)
+	}
+	if rec.EspKey == nil || *rec.EspKey == "" {
+		t.Fatal("no ESP key was generated for the switch")
+	}
+	if _, err := h.links.Get(ctx, "gre-a-1"); !errors.Is(err, link.ErrNotFound) {
+		t.Fatal("the old GRE interface is still there")
+	}
+	observed, err := h.links.Get(ctx, "esp-a-1")
+	if err != nil {
+		t.Fatalf("the ESP interface is missing: %v", err)
+	}
+	if observed.Tunnel == nil || observed.Tunnel.Esp == nil || len(observed.Tunnel.Esp.SPIs) != 2 {
+		t.Fatalf("the ESP associations are missing: %+v", observed.Tunnel)
+	}
+	if !result.Verify.Ok {
+		t.Fatalf("verification failed: %+v", result.Verify.Failures)
+	}
+}
+
+func TestSwitchEspToGre(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+
+	created := h.mustCreate(t, espRequest())
+	switched, err := h.service.Switch(ctx, created.Tunnel.TunnelID, model.TunnelTypeGRE, nil, "")
+	if err != nil {
+		t.Fatalf("switching to GRE failed: %v", err)
+	}
+	rec := switched.Tunnel
+	if rec.TunnelTypeID != model.TunnelTypeGRE {
+		t.Fatalf("the tunnel is type %d, want GRE", rec.TunnelTypeID)
+	}
+	if rec.InterfaceName != "gre-a-1" {
+		t.Fatalf("the tunnel is named %q, want gre-a-1", rec.InterfaceName)
+	}
+	if rec.EspKey != nil {
+		t.Fatalf("an ESP key survived the switch to GRE: %v", rec.EspKey)
+	}
+	if _, err := h.links.Get(ctx, "esp-a-1"); !errors.Is(err, link.ErrNotFound) {
+		t.Fatal("the old ESP interface is still there")
+	}
+	if _, err := h.links.Get(ctx, "gre-a-1"); err != nil {
+		t.Fatalf("the GRE interface is missing: %v", err)
+	}
+}
+
+// A switch that fails must leave the previous carrier running, the panel's
+// record saying so, and nothing of the failed carrier behind.
+func TestFailedSwitchRestoresThePreviousCarrier(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+
+	created := h.mustCreate(t, request())
+	id := created.Tunnel.TunnelID
+
+	// The unit starts and systemd reports it active, but the associations
+	// never appear, so verification fails after the old tunnel is gone.
+	h.systemd.SkipCommands = []string{"xfrm state add", "xfrm policy add"}
+
+	_, err := h.service.Switch(ctx, id, model.TunnelTypeESP, nil, "")
+	if err == nil {
+		t.Fatal("a switch whose associations never appeared was reported as done")
+	}
+	var applyErr *ApplyError
+	if !errors.As(err, &applyErr) {
+		t.Fatalf("error = %v (%T), want an ApplyError", err, err)
+	}
+	if !applyErr.RolledBack {
+		t.Fatal("the failure does not say the previous carrier was restored")
+	}
+
+	// The record says GRE again, and the tunnel is recorded as applied —
+	// the old carrier is back, not merely attempted.
+	stored, err := h.repo.ByID(ctx, id)
+	if err != nil {
+		t.Fatalf("reading the tunnel failed: %v", err)
+	}
+	if stored.TunnelTypeID != model.TunnelTypeGRE {
+		t.Fatalf("the record says type %d, want GRE", stored.TunnelTypeID)
+	}
+	if stored.InterfaceName != "gre-a-1" {
+		t.Fatalf("the record names %q, want gre-a-1", stored.InterfaceName)
+	}
+	if stored.ApplyStatusID != model.ApplyStatusApplied {
+		t.Fatalf("the tunnel is recorded as %d, want applied", stored.ApplyStatusID)
+	}
+
+	// The GRE interface is back and healthy, and nothing of the ESP attempt
+	// is left: no interface, no unit file.
+	if _, err := h.links.Get(ctx, "gre-a-1"); err != nil {
+		t.Fatalf("the GRE interface did not come back: %v", err)
+	}
+	if _, err := h.links.Get(ctx, "esp-a-1"); !errors.Is(err, link.ErrNotFound) {
+		t.Fatal("the failed ESP interface is still there")
+	}
+	if persist.Exists(h.unitPath("esp-a-1")) {
+		t.Fatal("the failed ESP unit file is still there")
+	}
+	report := h.service.Verify(ctx, stored)
+	if !report.Ok {
+		t.Fatalf("the restored tunnel does not verify: %+v", report.Failures)
+	}
+}
+
+func TestSwitchToTheSameCarrierIsRefused(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+
+	created := h.mustCreate(t, request())
+	if _, err := h.service.Switch(ctx, created.Tunnel.TunnelID, model.TunnelTypeGRE, nil, ""); err == nil {
+		t.Fatal("switching a GRE tunnel to GRE was accepted")
 	}
 }
 

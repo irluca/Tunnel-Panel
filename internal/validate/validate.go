@@ -587,6 +587,20 @@ func observedSummary(l link.Link) map[string]any {
 	return out
 }
 
+// ownInterfaceNames returns the interface names that belong to the tunnel
+// being validated: the name it will have, and the name it has now. A type
+// switch renders a new name from the template, so the live interface still
+// carries the old one — and it is the tunnel itself, not a conflict with it.
+func (st State) ownInterfaceNames(in TunnelInput) map[string]bool {
+	names := map[string]bool{in.InterfaceName: true}
+	for _, existing := range st.Tunnels {
+		if existing.TunnelID == in.TunnelID {
+			names[existing.InterfaceName] = true
+		}
+	}
+	return names
+}
+
 // checkEndpointConflicts applies §7.5: the tuple that actually collides at the
 // kernel level is (local, remote, ikey, okey), and it collides in either
 // direction.
@@ -615,8 +629,9 @@ func (v *Validator) checkEndpointConflicts(ctx context.Context, in TunnelInput, 
 
 	// The same check against live state, which catches a tunnel created outside
 	// the panel.
+	ownNames := st.ownInterfaceNames(in)
 	for _, l := range st.Links {
-		if !l.IsTunnel() || l.Tunnel == nil || l.Name == in.InterfaceName {
+		if !l.IsTunnel() || l.Tunnel == nil || ownNames[l.Name] {
 			continue
 		}
 		if !sameEndpointStrings(in.LocalEndpoint, in.RemoteEndpoint, l.Tunnel.Local, l.Tunnel.Remote) {
@@ -746,6 +761,7 @@ func sameKey(a, b *int64) bool {
 func (v *Validator) checkAddressConflicts(ctx context.Context, in TunnelInput, st State, errs *Errors, result *Result) {
 	allowPublic := v.settingBool("addressing.allow_public_ranges", false)
 	checkOverlap := v.settingBool("addressing.check_route_overlap", true)
+	ownNames := st.ownInterfaceNames(in)
 
 	for i, addr := range in.Addresses {
 		field := fmt.Sprintf("addresses.%d.address", i)
@@ -755,7 +771,7 @@ func (v *Validator) checkAddressConflicts(ctx context.Context, in TunnelInput, s
 		}
 
 		for _, l := range st.Links {
-			if l.Name == in.InterfaceName {
+			if ownNames[l.Name] {
 				continue
 			}
 			for _, existing := range l.Addresses {
@@ -782,7 +798,7 @@ func (v *Validator) checkAddressConflicts(ctx context.Context, in TunnelInput, s
 
 		network := prefix.Masked()
 		if checkOverlap {
-			if route, overlaps := overlappingRoute(network, st.Routes, in.InterfaceName); overlaps {
+			if route, overlaps := overlappingRoute(network, st.Routes, ownNames); overlaps {
 				if in.Force {
 					result.AddWarning(Warning{
 						Code: WarnRouteOverlap, Field: field,
@@ -823,9 +839,9 @@ func (v *Validator) checkAddressConflicts(ctx context.Context, in TunnelInput, s
 // overlappingRoute finds a route whose destination intersects the subnet.
 // Routes belonging to the interface being configured are skipped, since those
 // are the tunnel's own.
-func overlappingRoute(network netip.Prefix, routes []link.Route, ownDevice string) (link.Route, bool) {
+func overlappingRoute(network netip.Prefix, routes []link.Route, ownDevices map[string]bool) (link.Route, bool) {
 	for _, r := range routes {
-		if r.Device == ownDevice || r.IsDefault || r.Destination == "" || r.Destination == "default" {
+		if ownDevices[r.Device] || r.IsDefault || r.Destination == "" || r.Destination == "default" {
 			continue
 		}
 		dest, err := netip.ParsePrefix(r.Destination)
