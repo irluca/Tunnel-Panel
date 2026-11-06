@@ -293,6 +293,7 @@ export default {
     nothingMonitored: 'No tunnels monitored',
     needsAttention: '{{count}} needs attention',
     needsAttention_other: '{{count}} need attention',
+
     component: {
       database: 'Database',
       monitor: 'Monitoring',
@@ -302,6 +303,12 @@ export default {
       diagnostics: 'Diagnostics',
     },
     status: { ok: 'OK', degraded: 'Degraded', down: 'Down', unavailable: 'Unavailable' },
+  },
+  cluster: {
+    title: 'Cluster',
+    empty: 'No peers configured',
+    version: 'version {{version}}',
+    unreachable: 'Does not answer',
   },
 
   dashboard: {
@@ -897,6 +904,8 @@ export default {
       security: 'Security',
       system: 'System',
       notifications: 'Notifications',
+      dns: 'DNS failover',
+      cluster: 'Cluster',
     },
     categoryHelp: {
       display: 'How the panel looks and how figures are expressed.',
@@ -910,6 +919,8 @@ export default {
       security: 'Sessions, rate limits and origins.',
       system: 'Retention, reconciliation and housekeeping.',
       notifications: 'Where the panel tells the operator what it did on its own.',
+      dns: 'Which name moves between the healthy servers, and how often it rotates.',
+      cluster: 'The other panel instances in this cluster, and whether they answer.',
     },
     // The choices an enum setting offers. Without this block the control fell
     // back to the wire token, so a Farsi operator chose between options

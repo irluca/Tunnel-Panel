@@ -132,6 +132,20 @@ var additionalKeys = []string{
 	"notifications.telegram.bot_token",
 	"notifications.telegram.chat_id",
 	"notifications.telegram.tunnel_id",
+	// Cloudflare DNS failover: whether it is on, and the token, zone, name,
+	// type, TTL, candidate tunnels and rotation interval it uses. All eight
+	// are policy the operator sets, not values the code could know.
+	"dns.cloudflare.enabled",
+	"dns.cloudflare.api_token",
+	"dns.cloudflare.zone_id",
+	"dns.cloudflare.record_name",
+	"dns.cloudflare.record_type",
+	"dns.cloudflare.ttl",
+	"dns.cloudflare.failover_tunnels",
+	"dns.cloudflare.rotation_interval_seconds",
+	// Cluster peers: the other panel instances, as name and url pairs. The
+	// list is policy the operator sets, not something the code could know.
+	"cluster.peers",
 	// Whether the panel asks the release host about newer versions, and how
 	// long it reuses the answer. Both are policy: a server that must make no
 	// outbound connections turns the first off, and the second is what keeps
@@ -279,7 +293,7 @@ func TestEveryDefinitionIsComplete(t *testing.T) {
 		CategoryTunnel: true, CategoryAddressing: true, CategoryKeepalive: true,
 		CategoryMonitor: true, CategoryDiagnostics: true, CategoryMetrics: true,
 		CategoryDisplay: true, CategorySecurity: true, CategorySystem: true,
-		CategoryRoutes: true, CategoryNotifications: true,
+		CategoryRoutes: true, CategoryNotifications: true, CategoryDNS: true, CategoryCluster: true,
 	}
 
 	for _, d := range Definitions() {

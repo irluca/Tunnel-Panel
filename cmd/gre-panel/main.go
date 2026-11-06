@@ -27,9 +27,11 @@ import (
 	"github.com/drs/gre-panel/internal/audit"
 	"github.com/drs/gre-panel/internal/auth"
 	"github.com/drs/gre-panel/internal/backup"
+	"github.com/drs/gre-panel/internal/cluster"
 	"github.com/drs/gre-panel/internal/config"
 	"github.com/drs/gre-panel/internal/db"
 	"github.com/drs/gre-panel/internal/diag"
+	"github.com/drs/gre-panel/internal/dns"
 	"github.com/drs/gre-panel/internal/exec"
 	"github.com/drs/gre-panel/internal/i18n"
 	"github.com/drs/gre-panel/internal/link"
@@ -468,6 +470,15 @@ func run() error {
 		}),
 	}
 
+	// The cluster: the other panel instances this one is deployed with.
+	// It only watches them; one panel never changes another's tunnels.
+	clusterChecker := cluster.New(store, log)
+
+	// The DNS failover: the name clients connect to moves between the
+	// healthy foreign servers, and rotates on a schedule when configured.
+	// It reads the monitor, so it is created after the supervisor.
+	dnsFailover := dns.NewFailover(store, repo, monitorSupervisor, log)
+
 	server, err := api.New(api.Deps{
 		Config:          cfg,
 		DB:              database,
@@ -490,6 +501,8 @@ func run() error {
 		Diag:            diagService,
 		Persist:         persistStore,
 		Updates:         updates,
+		DNSFailover:     dnsFailover,
+		Cluster:         clusterChecker,
 		RuleBackend:     ruleBackend,
 		RouteGuard:      routeGuard,
 		AddressFallback: fallback,
@@ -530,6 +543,24 @@ func run() error {
 		Settings: store, Notify: notify.New(store, repo, log), Log: log,
 	})
 	go watchdog.Start(ctx)
+
+	// The DNS failover check, on its own clock. It does nothing when
+	// failover is disabled or unconfigured, and it moves the record only
+	// when the healthy candidate changed.
+	go func() {
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				if _, _, err := dnsFailover.Check(ctx); err != nil {
+					log.Warn("dns failover check failed", "error", err)
+				}
+			}
+		}
+	}()
 
 	if err := metricsSampler.Start(ctx); err != nil {
 		return fmt.Errorf("starting the metrics sampler: %w", err)

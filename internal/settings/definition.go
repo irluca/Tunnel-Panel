@@ -49,6 +49,8 @@ const (
 	CategorySecurity      = "security"
 	CategorySystem        = "system"
 	CategoryNotifications = "notifications"
+	CategoryDNS           = "dns"
+	CategoryCluster       = "cluster"
 )
 
 // Constraints is the machine-readable validation contract for one setting.
@@ -824,6 +826,64 @@ var definitions = []Definition{
 		Description: i18n.N("The tunnel the Telegram message leaves through, by its id. Zero means the direct internet. Routing through a tunnel is what lets an alert leave when the server's own path is filtered."),
 		Default:     int64(0),
 		Constraints: Constraints{Min: f64(0)},
+	},
+	{
+		Key: "dns.cloudflare.enabled", Type: KindBool, Category: CategoryDNS,
+		Label:       i18n.N("Cloudflare DNS failover"),
+		Description: i18n.N("When enabled, the DNS name below points at the first healthy tunnel in the failover list, and moves to the next one when it goes down. Off until a token, a zone and a name are configured."),
+		Default:     false,
+	},
+	{
+		Key: "dns.cloudflare.api_token", Type: KindString, Category: CategoryDNS,
+		Label:       i18n.N("Cloudflare API token"),
+		Description: i18n.N("An API token with permission to edit DNS records in the zone. It is a secret: it is redacted in the audit log and never shown back in full."),
+		Default:     "",
+	},
+	{
+		Key: "dns.cloudflare.zone_id", Type: KindString, Category: CategoryDNS,
+		Label:       i18n.N("Cloudflare zone id"),
+		Description: i18n.N("The id of the zone the record lives in, from the zone's overview page."),
+		Default:     "",
+	},
+	{
+		Key: "dns.cloudflare.record_name", Type: KindString, Category: CategoryDNS,
+		Label:       i18n.N("DNS name"),
+		Description: i18n.N("The name clients connect to, for example vpn.example.com. The failover moves this name between the candidate servers."),
+		Default:     "",
+	},
+	{
+		Key: "dns.cloudflare.record_type", Type: KindString, Category: CategoryDNS,
+		Label:       i18n.N("DNS record type"),
+		Description: i18n.N("The record type the name is: A for IPv4, AAAA for IPv6."),
+		Default:     "A",
+	},
+	{
+		Key: "dns.cloudflare.ttl", Type: KindInt, Category: CategoryDNS, Unit: unitSeconds,
+		Label:       i18n.N("DNS record TTL"),
+		Description: i18n.N("How long resolvers may cache the record. Shorter moves clients faster when the record moves, and costs more queries."),
+		Default:     int64(60),
+		Constraints: Constraints{Min: f64(1), Max: f64(86400)},
+	},
+	{
+		Key: "dns.cloudflare.failover_tunnels", Type: KindJSON, Category: CategoryDNS,
+		Label:       i18n.N("Failover tunnels"),
+		Description: i18n.N("The tunnels the name may point at, in priority order, by tunnel id. The name points at the first whose tunnel is Up."),
+		Default:     []any{},
+		Constraints: Constraints{JsonShape: "array"},
+	},
+	{
+		Key: "dns.cloudflare.rotation_interval_seconds", Type: KindInt, Category: CategoryDNS, Unit: unitSeconds,
+		Label:       i18n.N("Rotate the record every"),
+		Description: i18n.N("When set, the name moves to the next candidate in the failover list every this many seconds, whatever its health, so the egress address changes on a schedule. Zero means no rotation: the name moves only on failure."),
+		Default:     int64(0),
+		Constraints: Constraints{Min: f64(0), Max: f64(604800)},
+	},
+	{
+		Key: "cluster.peers", Type: KindJSON, Category: CategoryCluster,
+		Label:       i18n.N("Cluster peers"),
+		Description: i18n.N("The other panel instances in this cluster, as a list of name and url pairs. The cluster view polls each one's health endpoint and reports which answer and which do not. A panel never changes another's tunnels."),
+		Default:     []any{},
+		Constraints: Constraints{JsonShape: "array"},
 	},
 	{
 		Key: "system.update_check_enabled", Type: KindBool, Category: CategorySystem,

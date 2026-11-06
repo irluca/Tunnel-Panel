@@ -17,9 +17,11 @@ import (
 	"github.com/drs/gre-panel/internal/address"
 	"github.com/drs/gre-panel/internal/audit"
 	"github.com/drs/gre-panel/internal/auth"
+	"github.com/drs/gre-panel/internal/cluster"
 	"github.com/drs/gre-panel/internal/config"
 	"github.com/drs/gre-panel/internal/db"
 	"github.com/drs/gre-panel/internal/diag"
+	"github.com/drs/gre-panel/internal/dns"
 	"github.com/drs/gre-panel/internal/i18n"
 	"github.com/drs/gre-panel/internal/link"
 	"github.com/drs/gre-panel/internal/metrics"
@@ -98,6 +100,12 @@ type Deps struct {
 	// without it the update endpoints report the feature as unavailable, which
 	// is the honest answer for a server built without the plumbing.
 	Updates *Updates
+	// DNSFailover moves a DNS name between the healthy servers. Optional:
+	// without it the DNS endpoints report the feature as unavailable.
+	DNSFailover *dns.Failover
+	// Cluster watches the other panel instances. Optional: without it the
+	// cluster endpoint reports the feature as unavailable.
+	Cluster *cluster.Checker
 	// RuleBackend is what startup concluded about this host's netfilter
 	// interface. It is reported through the capabilities endpoint so the
 	// frontend can explain which one is carrying the forwarding rules.
@@ -152,6 +160,8 @@ type Server struct {
 	persist      *persist.Store
 	updates      *Updates
 	ruleBackend  rules.Detection
+	dnsFailover  *dns.Failover
+	cluster      *cluster.Checker
 	started      time.Time
 
 	routeGuard      *safety.RouteGuard
@@ -229,6 +239,8 @@ func New(d Deps) (*Server, error) {
 		persist:      d.Persist,
 		updates:      d.Updates,
 		ruleBackend:  d.RuleBackend,
+		dnsFailover:  d.DNSFailover,
+		cluster:      d.Cluster,
 		started:      time.Now(),
 
 		routeGuard:      d.RouteGuard,
@@ -364,7 +376,7 @@ func (s *Server) buildRouter() http.Handler {
 						r.Post("/restart", s.tunnelAction("restart", model.AuditActionTunnelReapply, s.tunnels.Restart))
 						r.Post("/reapply", s.tunnelAction("reapply", model.AuditActionTunnelReapply, s.tunnels.Reapply))
 						r.Post("/switch", s.handleSwitchTunnel)
-					r.Post("/switch/preview", s.handleSwitchPreview)
+						r.Post("/switch/preview", s.handleSwitchPreview)
 
 						r.Get("/addresses", s.handleListAddresses)
 						r.Post("/addresses", s.handleAddAddress)
@@ -407,11 +419,17 @@ func (s *Server) buildRouter() http.Handler {
 						r.Post("/tunnels/{id}/diagnostics/tcp", s.handleDiagTcpCheck)
 						r.Post("/tunnels/{id}/diagnostics/traceroute", s.handleDiagTraceroute)
 						r.Post("/tunnels/{id}/diagnostics/analyze", s.handleDiagAnalyze)
-					r.Post("/tunnels/{id}/diagnostics/path-test", s.handleDiagPathTest)
+						r.Post("/tunnels/{id}/diagnostics/path-test", s.handleDiagPathTest)
 						r.Get("/tunnels/{id}/counters", s.handleTunnelCounters)
 						r.Get("/diagnostics/runs", s.handleDiagRuns)
 						r.Get("/diagnostics/runs/{id}", s.handleDiagRun)
 						r.Delete("/diagnostics/runs/{id}", s.handleDeleteDiagRun)
+
+						// DNS failover. The token and the record are settings; the
+						// endpoints only test the token and run the check.
+						r.Post("/dns/cloudflare/test", s.handleDNSCloudflareTest)
+						r.Post("/dns/cloudflare/check", s.handleDNSCloudflareCheck)
+						r.Get("/cluster/peers", s.handleClusterPeers)
 					})
 
 					// Backup (§15). It reads and writes tunnels, so it lives

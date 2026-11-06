@@ -793,9 +793,9 @@ func TestFullSessionFlow(t *testing.T) {
 	}
 	// One category per group the settings screen renders: tunnel, addressing,
 	// keepalive, monitor, diagnostics, metrics, routes, display, security,
-	// system and notifications.
-	if len(schema.Categories) != 11 {
-		t.Errorf("the schema reports %d categories, want 11: %v", len(schema.Categories), schema.Categories)
+	// system, notifications, dns and cluster.
+	if len(schema.Categories) != 13 {
+		t.Errorf("the schema reports %d categories, want 13: %v", len(schema.Categories), schema.Categories)
 	}
 	for _, entry := range schema.Settings {
 		if entry.Description == "" || entry.Category == "" || entry.Type == "" {

@@ -303,6 +303,12 @@ export default {
     },
     status: { ok: 'سالم', degraded: 'افت‌کرده', down: 'قطع', unavailable: 'در دسترس نیست' },
   },
+  cluster: {
+    title: 'خوشه',
+    empty: 'همتایی پیکربندی نشده',
+    version: 'نسخهٔ {{version}}',
+    unreachable: 'پاسخ نمی‌دهد',
+  },
 
   dashboard: {
     title: 'داشبورد',
@@ -884,6 +890,8 @@ export default {
       security: 'امنیت',
       system: 'سامانه',
       notifications: 'اعلان‌ها',
+      dns: 'فیل‌اور DNS',
+      cluster: 'خوشه',
     },
     categoryHelp: {
       display: 'اینکه پنل چطور دیده شود و اعداد چگونه بیان شوند.',
@@ -897,6 +905,8 @@ export default {
       security: 'نشست‌ها، محدودیت نرخ و مبدأهای مجاز.',
       system: 'نگهداشت، تطبیق و کارهای خانه‌داری.',
       notifications: 'اینکه پنل کجا به اپراتور بگوید خودش چه کاری کرده است.',
+      dns: 'کدام نام بین سرورهای سالم جابه‌جا شود و هر چند وقت بچرخد.',
+      cluster: 'نمونه‌های دیگر پنل در این خوشه، و اینکه آیا پاسخ می‌دهند.',
     },
     enum: {
       keepalive: {

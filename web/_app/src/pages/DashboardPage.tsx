@@ -18,6 +18,7 @@ import { Badge, EmptyState, ErrorState, Skeleton } from '@/components/ui/feedbac
 import { Technical } from '@/components/ui/technical'
 import { StaleWrapper } from '@/components/layout/LiveIndicator'
 import { AttentionCard } from '@/components/dashboard/AttentionCard'
+import { ClusterCard } from '@/components/dashboard/ClusterCard'
 import { CpuCard, DiskCard, MemoryCard, SwapCard } from '@/components/dashboard/ResourceCards'
 import { TrafficCard } from '@/components/dashboard/TrafficCard'
 import { RoutesStrip } from '@/components/dashboard/RoutesStrip'
@@ -72,6 +73,7 @@ export default function DashboardPage() {
       {/* Absent unless something actually disagrees, so it means something
           when it appears. The machine itself always leads. */}
       <AttentionCard />
+      <ClusterCard />
 
       {metrics.isLoading || !metrics.latest ? (
         <ResourceSkeleton />
