@@ -151,6 +151,15 @@ var additionalKeys = []string{
 	"routes.monitor_timeout_seconds",
 	"routes.monitor_failure_threshold",
 	"routes.monitor_recovery_threshold",
+	// The watchdog's failover policy: whether it switches a down tunnel's
+	// carrier, how long down it waits, and the circuit breaker that stops it
+	// switching a tunnel that keeps failing. All five are policy, not
+	// constants: the operator decides how aggressive the failover is.
+	"watchdog.enabled",
+	"watchdog.down_seconds",
+	"watchdog.min_switch_interval_seconds",
+	"watchdog.max_switches",
+	"watchdog.window_seconds",
 }
 
 func TestEverySpecifiedKeyIsDeclared(t *testing.T) {

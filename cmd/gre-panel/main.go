@@ -48,6 +48,7 @@ import (
 	"github.com/drs/gre-panel/internal/tunnel"
 	"github.com/drs/gre-panel/internal/update"
 	"github.com/drs/gre-panel/internal/validate"
+	"github.com/drs/gre-panel/internal/watchdog"
 )
 
 // Stamped at link time with -ldflags "-X main.version=... -X main.commit=... -X main.buildDate=..." (§20).
@@ -508,6 +509,17 @@ func run() error {
 		return fmt.Errorf("starting the monitoring supervisor: %w", err)
 	}
 	defer monitorSupervisor.Stop()
+
+	// The watchdog: when a tunnel has been Down for a minute it switches the
+	// carrier, with the circuit breaker as the safety. It reads the same
+	// verdicts the dashboard shows and switches through the same service the
+	// operator's own switch button uses, so a switch it makes is verified and
+	// rolled back exactly like a manual one.
+	watchdog := watchdog.New(watchdog.Deps{
+		Snapshots: monitorSupervisor, Tunnels: repo, Switch: tunnelService,
+		Settings: store, Log: log,
+	})
+	go watchdog.Start(ctx)
 
 	if err := metricsSampler.Start(ctx); err != nil {
 		return fmt.Errorf("starting the metrics sampler: %w", err)
