@@ -18,6 +18,11 @@ const (
 	// TunnelTypeESP is an IPsec ESP tunnel: a kernel xfrm interface bound to
 	// a pair of manually keyed security associations, AES-128-GCM, no IKE.
 	TunnelTypeESP int64 = 50
+	// TunnelTypeGREWSS is a GRE tunnel carried over a WebSocket Secure
+	// stream instead of IP protocol 47, for paths that filter GRE. The
+	// packets are the same GRE packets with the same keys; the relay moves
+	// them over TLS, and each end feeds them to a TUN interface.
+	TunnelTypeGREWSS int64 = 60
 )
 
 // TunnelSide identifiers. A and B are the two ends of one tunnel; neither has a
@@ -238,6 +243,7 @@ var tunnelTypeKinds = map[int64]string{
 	TunnelTypeIP6GRE:    "ip6gre",
 	TunnelTypeIP6GRETAP: "ip6gretap",
 	TunnelTypeESP:       "esp",
+	TunnelTypeGREWSS:   "gre-wss",
 }
 
 // TunnelTypeKind returns the kernel's name for a tunnel type, or "" when the
@@ -369,6 +375,7 @@ func LookupTables() []LookupTable {
 			{TunnelTypeIP6GRE, "IP6GRE"},
 			{TunnelTypeIP6GRETAP, "IP6GRETAP"},
 			{TunnelTypeESP, "ESP"},
+			{TunnelTypeGREWSS, "GRE over WSS"},
 		}},
 		{Name: "TunnelSide", Values: []LookupValue{
 			{TunnelSideA, "A"},

@@ -213,6 +213,10 @@ var columnAdditions = []columnAddition{
 	// every GRE tunnel, which has no such key.
 	{"Tunnel", "EspKey", "TEXT"},
 
+	// The GRE-over-WSS shared token. NULL on every tunnel that predates it
+	// and on every tunnel that is not GRE over WSS.
+	{"Tunnel", "WssToken", "TEXT"},
+
 	// Monitoring a forwarding rule's destinations. Every one is optional and
 	// inherits from the rule, which inherits from the panel-wide setting, so
 	// an installation that predates them behaves exactly as it did.

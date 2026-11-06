@@ -2,10 +2,15 @@ package grewss
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
 	"crypto/tls"
+	"crypto/x509"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"log/slog"
+	"math/big"
 	"net"
 	"net/http"
 	"sync"
@@ -27,8 +32,12 @@ const (
 
 // Config is what a relay needs. One relay serves one tunnel.
 type Config struct {
-	// Key is the GRE key in the header of every packet.
-	Key uint32
+	// Key is the GRE key written into the header of every packet the relay
+	// sends: the outbound key. InKey is the key it expects on packets it
+	// receives: the inbound key. When InKey is zero it defaults to Key,
+	// which is the panel's default — one key for both directions.
+	Key   uint32
+	InKey uint32
 	// Token authenticates the far end. It must be the same on both ends.
 	Token string
 	// Path is the WebSocket path. It defaults to /gre-wss.
@@ -41,8 +50,44 @@ type Config struct {
 	// client skips verification (the token, not the certificate, is the
 	// authentication) — the panel's certificate is self-signed.
 	TLS *tls.Config
+	// TunName is the TUN interface the relay creates and owns.
+	TunName string
+	// Mtu is the MTU the relay sets on the TUN. Zero leaves the default.
+	Mtu int
+	// Addresses are the addresses the relay adds to the TUN, in CIDR form
+	// ("10.10.1.1/30"), or with an explicit peer for a single-address
+	// point-to-point link ("10.10.1.1 peer 10.10.1.2/32").
+	Addresses []string
 	// Log, when nil, is the default logger.
 	Log *slog.Logger
+}
+
+// Run opens the TUN, configures it, and runs the relay in the mode the
+// config names: server (Listen set) or client (Dial set). It is the entry
+// point the panel's systemd unit runs, and it returns when the context is
+// cancelled.
+func Run(ctx context.Context, cfg Config) error {
+	if cfg.TunName == "" {
+		return fmt.Errorf("the TUN interface name is required")
+	}
+	src, err := OpenTun(cfg.TunName)
+	if err != nil {
+		return err
+	}
+	defer src.Close()
+	if tun, ok := src.(*tunDevice); ok {
+		if err := tun.Configure(cfg.Mtu, cfg.Addresses); err != nil {
+			return err
+		}
+	}
+	relay := New(cfg, src)
+	if cfg.Listen != "" {
+		return relay.Serve(ctx)
+	}
+	if cfg.Dial != "" {
+		return relay.Dial(ctx)
+	}
+	return fmt.Errorf("neither a listen address nor a dial URL was given")
 }
 
 // Relay moves packets between a TUN interface and a WebSocket.
@@ -66,6 +111,9 @@ func New(cfg Config, src PacketSource) *Relay {
 		path = defaultPath
 	}
 	cfg.Path = path
+	if cfg.InKey == 0 {
+		cfg.InKey = cfg.Key
+	}
 	return &Relay{
 		cfg: cfg,
 		src: src,
@@ -90,16 +138,28 @@ func New(cfg Config, src PacketSource) *Relay {
 func (r *Relay) Serve(ctx context.Context) error {
 	mux := http.NewServeMux()
 	mux.HandleFunc(r.cfg.Path, r.handleConnection)
+	tlsCfg := r.cfg.TLS
+	if tlsCfg == nil {
+		// No certificate was given, so one is generated for this run. The
+		// client cannot verify it against a public root anyway (the panel's
+		// certificate is self-signed), and the token, not the certificate,
+		// is the authentication — so an ephemeral certificate loses nothing.
+		var err error
+		tlsCfg, err = selfSignedCert()
+		if err != nil {
+			return fmt.Errorf("generating the server certificate: %w", err)
+		}
+	}
 	srv := &http.Server{
 		Addr:      r.cfg.Listen,
 		Handler:   mux,
-		TLSConfig: r.cfg.TLS,
+		TLSConfig: tlsCfg,
 	}
 	ln, err := net.Listen("tcp", r.cfg.Listen)
 	if err != nil {
 		return fmt.Errorf("listening on %s: %w", r.cfg.Listen, err)
 	}
-	tlsLn := tls.NewListener(ln, r.cfg.TLS)
+	tlsLn := tls.NewListener(ln, tlsCfg)
 	go func() {
 		<-ctx.Done()
 		_ = srv.Close()
@@ -200,7 +260,7 @@ func (r *Relay) relay(ctx context.Context, conn *websocket.Conn) {
 			if err != nil {
 				return
 			}
-			ip, err := Decapsulate(msg, r.cfg.Key)
+			ip, err := Decapsulate(msg, r.cfg.InKey)
 			if err != nil {
 				r.log.Warn("dropping a packet that is not our GRE", "error", err)
 				continue
@@ -216,4 +276,31 @@ func (r *Relay) relay(ctx context.Context, conn *websocket.Conn) {
 	case <-done:
 	}
 	_ = conn.Close()
+}
+
+// selfSignedCert generates a short-lived self-signed certificate for the
+// server. It is ephemeral: a new one is made on every start, because the
+// client verifies the token, not the certificate.
+func selfSignedCert() (*tls.Config, error) {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		return nil, err
+	}
+	tmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(time.Now().UnixNano()),
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(24 * time.Hour),
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	if err != nil {
+		return nil, err
+	}
+	cert, err := tls.X509KeyPair(
+		pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}),
+		pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)}),
+	)
+	if err != nil {
+		return nil, err
+	}
+	return &tls.Config{Certificates: []tls.Certificate{cert}}, nil
 }

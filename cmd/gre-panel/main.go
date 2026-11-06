@@ -82,6 +82,13 @@ func main() {
 }
 
 func run() error {
+	// The relay subcommand runs the GRE-over-WSS relay for one tunnel. It is
+	// what the panel's systemd unit executes, so it is checked before the
+	// server starts: `gre-panel relay --tun ... --listen ...`.
+	if len(os.Args) > 1 && os.Args[1] == "relay" {
+		return runRelay(os.Args[2:])
+	}
+
 	// The environment file backs the process environment rather than replacing
 	// it. systemd sets these variables from the same file, so under the service
 	// this changes nothing; it matters for every other caller, above all the

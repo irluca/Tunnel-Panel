@@ -46,6 +46,11 @@ type TunnelInput struct {
 	// one; the value is a credential and is never returned by the API.
 	EspKey *string `json:"esp_key,omitempty"`
 
+	// WssToken is the shared token that authenticates the far end of a
+	// GRE-over-WSS tunnel. Empty at creation means the panel generates one;
+	// the value is a credential and is never returned by the API.
+	WssToken *string `json:"wss_token,omitempty"`
+
 	HasInputChecksum  bool `json:"has_input_checksum"`
 	HasOutputChecksum bool `json:"has_output_checksum"`
 	HasInputSequence  bool `json:"has_input_sequence"`

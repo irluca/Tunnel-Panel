@@ -93,6 +93,12 @@ type Tunnel struct {
 	// leaves this host, and the audit log redacts it.
 	EspKey *string `json:"-"`
 
+	// WssToken is the shared token that authenticates the far end of a
+	// GRE-over-WSS tunnel. It is a credential, never serialised: the pairing
+	// code is the only way it leaves this host, and the audit log redacts
+	// it. It is generated on creation when the operator does not give one.
+	WssToken *string `json:"-"`
+
 	HasInputChecksum   bool `json:"has_input_checksum"`
 	HasOutputChecksum  bool `json:"has_output_checksum"`
 	HasInputSequence   bool `json:"has_input_sequence"`
