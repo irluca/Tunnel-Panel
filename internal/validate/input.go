@@ -41,6 +41,11 @@ type TunnelInput struct {
 	IKey *int64 `json:"ikey"`
 	OKey *int64 `json:"okey"`
 
+	// EspKey is the pre-shared AES-128-GCM key of an ESP tunnel, 40
+	// hexadecimal characters. Empty at creation means the panel generates
+	// one; the value is a credential and is never returned by the API.
+	EspKey *string `json:"esp_key,omitempty"`
+
 	HasInputChecksum  bool `json:"has_input_checksum"`
 	HasOutputChecksum bool `json:"has_output_checksum"`
 	HasInputSequence  bool `json:"has_input_sequence"`

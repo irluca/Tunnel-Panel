@@ -29,6 +29,9 @@ const (
 	KindGRETAP    = "gretap"
 	KindIP6GRE    = "ip6gre"
 	KindIP6GRETAP = "ip6gretap"
+	// KindESP is the panel's name for an ESP tunnel. The kernel interface it
+	// creates is of kind "xfrm"; see EspIfID and the Create path.
+	KindESP = "esp"
 )
 
 // Manager implementation names, reported through /system/capabilities.
@@ -51,13 +54,13 @@ var (
 
 // TunnelKinds lists every tunnel kind the panel understands, in a stable order.
 func TunnelKinds() []string {
-	return []string{KindGRE, KindGRETAP, KindIP6GRE, KindIP6GRETAP}
+	return []string{KindGRE, KindGRETAP, KindIP6GRE, KindIP6GRETAP, KindESP}
 }
 
 // IsTunnelKind reports whether a kind names a tunnel this panel manages.
 func IsTunnelKind(kind string) bool {
 	switch kind {
-	case KindGRE, KindGRETAP, KindIP6GRE, KindIP6GRETAP:
+	case KindGRE, KindGRETAP, KindIP6GRE, KindIP6GRETAP, KindESP:
 		return true
 	}
 	return false
@@ -287,6 +290,18 @@ type TunnelSpec struct {
 	EncapLimit   *int
 	TrafficClass string
 	FlowLabel    string
+
+	// ESP tunnels only. EspKey is the decoded 20-byte AES-128-GCM key
+	// (16 bytes of key plus 4 bytes of salt); EspSPIOut and EspSPIIn are
+	// the security association identifiers for the two directions, derived
+	// from the tunnel's identity; EspIfID binds the states and policies to
+	// the xfrm interface this spec creates. The key is a credential and is
+	// never serialised: a plan step carries this spec, and plans are
+	// returned by the preview endpoint and written to the audit log.
+	EspKey    []byte `json:"-"`
+	EspSPIOut uint32
+	EspSPIIn  uint32
+	EspIfID   uint32
 }
 
 // Route is one entry of the kernel routing table. The panel reads routes to

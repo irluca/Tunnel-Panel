@@ -25,11 +25,12 @@ const Redacted = "[redacted]"
 //
 // Note the deliberate absence of a bare "key": IKey and OKey are GRE
 // configuration, not credentials, and redacting them would make the audit trail
-// useless for diagnosing the single most common misconfiguration.
+// useless for diagnosing the single most common misconfiguration. The ESP key
+// is the opposite: a pre-shared secret, so "esp_key" is listed and redacted.
 var secretFieldFragments = []string{
 	"password", "passwd", "secret", "token", "authorization", "cookie",
 	"csrf", "credential", "private_key", "privatekey", "apikey", "api_key",
-	"session", "bearer",
+	"session", "bearer", "esp_key",
 }
 
 // IsSecretField reports whether a field name looks like it holds a secret.

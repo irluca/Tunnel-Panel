@@ -19,7 +19,20 @@ const (
 	// OuterIPv4Header and OuterIPv6Header are the outer delivery headers.
 	OuterIPv4Header = 20
 	OuterIPv6Header = 40
+	// EspHeaderBytes is the ESP encapsulation cost with AES-128-GCM: SPI (4)
+	// plus sequence number (4) plus initialisation vector (8) plus trailer
+	// (2) plus integrity check value (16).
+	EspHeaderBytes = 34
+	// EspOverhead is the full encapsulation cost of an ESP tunnel over IPv4:
+	// the outer IPv4 header plus the ESP header.
+	EspOverhead = OuterIPv4Header + EspHeaderBytes // 54
 )
+
+// EspDefaultMtu is the MTU a new ESP tunnel gets when the operator does not
+// state one. 1500 - 54 would be 1446; 1350 leaves room for underlays that
+// are not quite 1500 (PPPoE, an extra tunnel underneath) without
+// fragmenting.
+const EspDefaultMtu = 1350
 
 // MtuBounds are the accepted MTU range (§7.3).
 const (
@@ -42,6 +55,9 @@ type OverheadInput struct {
 // 20 + 4 + 4 = 28, so the correct MTU over a 1500-byte underlay is 1472 — which
 // is what the legacy script hardcoded, and is right.
 func Overhead(in OverheadInput) int {
+	if in.Kind == link.KindESP {
+		return EspOverhead
+	}
 	total := GreBaseHeader
 	if in.HasKey {
 		total += GreKeyField
@@ -121,6 +137,9 @@ func overheadBreakdown(in TunnelInput) []MtuTerm {
 	outer := MtuTerm{Name: i18n.N("outer IPv4 header"), Bytes: OuterIPv4Header}
 	if in.IsIPv6() {
 		outer = MtuTerm{Name: i18n.N("outer IPv6 header"), Bytes: OuterIPv6Header}
+	}
+	if in.Kind() == link.KindESP {
+		return []MtuTerm{outer, {Name: i18n.N("ESP header"), Bytes: EspHeaderBytes}}
 	}
 	terms := []MtuTerm{outer, {Name: i18n.N("GRE base header"), Bytes: GreBaseHeader}}
 	if in.HasKey() {

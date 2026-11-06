@@ -391,6 +391,11 @@ func TestColumnAdditionsReachAnExistingTable(t *testing.T) {
 	} else if has {
 		t.Fatal("the pre-migration table already has DisplayName; the test fixture is wrong")
 	}
+	if has, err := hasColumn(ctx, d.Write, "Tunnel", "EspKey"); err != nil {
+		t.Fatalf("hasColumn returned an unexpected error: %v", err)
+	} else if has {
+		t.Fatal("the pre-migration table already has EspKey; the test fixture is wrong")
+	}
 
 	// A real tunnel row, to prove the migration does not disturb existing data.
 	now := model.NowUTC()
@@ -413,16 +418,25 @@ func TestColumnAdditionsReachAnExistingTable(t *testing.T) {
 	} else if !has {
 		t.Error("DisplayName was not added to an existing Tunnel table")
 	}
+	if has, err := hasColumn(ctx, d.Write, "Tunnel", "EspKey"); err != nil {
+		t.Fatalf("hasColumn returned an unexpected error: %v", err)
+	} else if !has {
+		t.Error("EspKey was not added to an existing Tunnel table")
+	}
 
 	var interfaceName string
 	var displayName sql.NullString
+	var espKey sql.NullString
 	if err := d.Read.QueryRow(
-		`SELECT InterfaceName, DisplayName FROM Tunnel WHERE InterfaceName = 'gre-a-0'`).
-		Scan(&interfaceName, &displayName); err != nil {
+		`SELECT InterfaceName, DisplayName, EspKey FROM Tunnel WHERE InterfaceName = 'gre-a-0'`).
+		Scan(&interfaceName, &displayName, &espKey); err != nil {
 		t.Fatalf("reading the pre-migration tunnel after upgrade failed: %v", err)
 	}
 	if displayName.Valid {
 		t.Errorf("DisplayName = %q on a row that predates the column, want NULL", displayName.String)
+	}
+	if espKey.Valid {
+		t.Errorf("EspKey = %q on a row that predates the column, want NULL", espKey.String)
 	}
 
 	// Init must still be idempotent against the now-upgraded table.

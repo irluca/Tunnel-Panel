@@ -15,6 +15,9 @@ const (
 	TunnelTypeGRETAP    int64 = 20
 	TunnelTypeIP6GRE    int64 = 30
 	TunnelTypeIP6GRETAP int64 = 40
+	// TunnelTypeESP is an IPsec ESP tunnel: a kernel xfrm interface bound to
+	// a pair of manually keyed security associations, AES-128-GCM, no IKE.
+	TunnelTypeESP int64 = 50
 )
 
 // TunnelSide identifiers. A and B are the two ends of one tunnel; neither has a
@@ -234,6 +237,7 @@ var tunnelTypeKinds = map[int64]string{
 	TunnelTypeGRETAP:    "gretap",
 	TunnelTypeIP6GRE:    "ip6gre",
 	TunnelTypeIP6GRETAP: "ip6gretap",
+	TunnelTypeESP:       "esp",
 }
 
 // TunnelTypeKind returns the kernel's name for a tunnel type, or "" when the
@@ -364,6 +368,7 @@ func LookupTables() []LookupTable {
 			{TunnelTypeGRETAP, "GRETAP"},
 			{TunnelTypeIP6GRE, "IP6GRE"},
 			{TunnelTypeIP6GRETAP, "IP6GRETAP"},
+			{TunnelTypeESP, "ESP"},
 		}},
 		{Name: "TunnelSide", Values: []LookupValue{
 			{TunnelSideA, "A"},

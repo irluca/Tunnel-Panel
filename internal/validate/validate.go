@@ -89,6 +89,7 @@ func validateStatic(ctx context.Context, in TunnelInput, partial bool) *Errors {
 	}
 	validateEndpoints(ctx, in, errs, partial)
 	validateNumbers(ctx, in, errs, partial)
+	validateEsp(ctx, in, errs, partial)
 	validateAddressSyntax(ctx, in, errs)
 
 	return errs
@@ -113,6 +114,48 @@ func validateType(ctx context.Context, in TunnelInput, errs *Errors, partial boo
 		default:
 			errs.Add("persistence_type_id", CodeInvalidPersistence,
 				i18n.T(ctx, "%d is not a known persistence type", in.PersistenceTypeID), nil)
+		}
+	}
+}
+
+// validateEsp applies the rules only an ESP tunnel has. ESP is an IPv4
+// underlay type, so the endpoint family check already rejects IPv6
+// endpoints; what remains is the key, the fields that belong to GRE, and
+// the persistence the security associations need to survive a reboot.
+func validateEsp(ctx context.Context, in TunnelInput, errs *Errors, partial bool) {
+	if in.TunnelTypeID != model.TunnelTypeESP {
+		return
+	}
+	if in.EspKey != nil {
+		if _, err := link.ParseEspKey(*in.EspKey); err != nil {
+			errs.Add("esp_key", CodeInvalidEspKey,
+				i18n.T(ctx, "An ESP key must be 40 hexadecimal characters (16 bytes of key plus 4 bytes of salt)."), nil)
+		}
+	}
+	// GRE's header fields have no meaning on an ESP tunnel, which carries no
+	// GRE header at all. Rejecting them here is kinder than silently
+	// ignoring them at apply time.
+	if in.IKey != nil || in.OKey != nil {
+		errs.Add("ikey", CodeInvalidEspField,
+			i18n.T(ctx, "An ESP tunnel has no GRE key; its shared secret is the ESP key."), nil)
+	}
+	if in.HasInputChecksum || in.HasOutputChecksum || in.HasInputSequence || in.HasOutputSequence {
+		errs.Add("has_input_checksum", CodeInvalidEspField,
+			i18n.T(ctx, "Checksum and sequence options belong to GRE and have no meaning on an ESP tunnel."), nil)
+	}
+	if in.HopLimit != nil || in.EncapLimit != nil || in.TrafficClass != "" || in.FlowLabel != "" {
+		errs.Add("hop_limit", CodeInvalidEspField,
+			i18n.T(ctx, "Hop limit, encapsulation limit, traffic class and flow label belong to the IPv6 GRE types."), nil)
+	}
+	// The security associations live in the kernel, not in a file, so only
+	// the systemd unit — which runs the commands that create them — brings
+	// an ESP tunnel back after a reboot. Networkd can recreate the
+	// interface but not the associations, and a runtime tunnel does not
+	// claim to survive one at all.
+	if !partial || in.PersistenceTypeID != 0 {
+		if in.PersistenceTypeID == model.PersistenceTypeNetworkd {
+			errs.Add("persistence_type_id", CodeInvalidPersistence,
+				i18n.T(ctx, "An ESP tunnel needs systemd persistence: only the systemd unit re-establishes the IPsec security associations after a reboot."), nil)
 		}
 	}
 }
@@ -435,7 +478,11 @@ func (v *Validator) ValidateAgainst(ctx context.Context, in TunnelInput, st Stat
 	if w, ok := result.Mtu.warning(ctx); ok {
 		result.AddWarning(w)
 	}
-	v.addKeyWarnings(ctx, in, &result)
+	// GRE key warnings have nothing to say about an ESP tunnel, whose shared
+	// secret is the ESP key rather than GRE keys.
+	if in.Kind() != link.KindESP {
+		v.addKeyWarnings(ctx, in, &result)
+	}
 	if in.PersistenceTypeID == model.PersistenceTypeRuntime {
 		result.AddWarning(Warning{
 			Code:  WarnRuntimeOnly,
@@ -532,14 +579,21 @@ func (v *Validator) checkEndpointConflicts(ctx context.Context, in TunnelInput, 
 		if existing.TunnelID == in.TunnelID {
 			continue
 		}
-		if !sameEndpointPair(in, existing) || !sameKeys(in.IKey, in.OKey, existing.IKey, existing.OKey) {
+		if !sameTunnelIdentity(in, existing) {
 			continue
 		}
-		errs.Add("remote_endpoint", CodeEndpointConflict,
-			i18n.T(ctx, "The tunnel %q already uses this combination of endpoints and keys. "+
-				"The kernel identifies a GRE tunnel by exactly that, so a second one would collide.",
-				existing.InterfaceName),
-			map[string]any{"tunnel_id": existing.TunnelID, "interface_name": existing.InterfaceName})
+		if in.Kind() == link.KindESP {
+			errs.Add("remote_endpoint", CodeEndpointConflict,
+				i18n.T(ctx, "The tunnel %q already uses these endpoints with the same inner addresses, so it would derive the same ESP security associations. The kernel identifies an ESP tunnel by exactly that, so a second one would collide.",
+					existing.InterfaceName),
+				map[string]any{"tunnel_id": existing.TunnelID, "interface_name": existing.InterfaceName})
+		} else {
+			errs.Add("remote_endpoint", CodeEndpointConflict,
+				i18n.T(ctx, "The tunnel %q already uses this combination of endpoints and keys. "+
+					"The kernel identifies a GRE tunnel by exactly that, so a second one would collide.",
+					existing.InterfaceName),
+				map[string]any{"tunnel_id": existing.TunnelID, "interface_name": existing.InterfaceName})
+		}
 		return
 	}
 
@@ -552,15 +606,85 @@ func (v *Validator) checkEndpointConflicts(ctx context.Context, in TunnelInput, 
 		if !sameEndpointStrings(in.LocalEndpoint, in.RemoteEndpoint, l.Tunnel.Local, l.Tunnel.Remote) {
 			continue
 		}
-		if !sameKeys(in.IKey, in.OKey, keyPtr(l.Tunnel.IKey), keyPtr(l.Tunnel.OKey)) {
+		if in.Kind() == link.KindESP {
+			if !sameEspInnerAddresses(in.Addresses, l.Addresses) {
+				continue
+			}
+		} else if !sameKeys(in.IKey, in.OKey, keyPtr(l.Tunnel.IKey), keyPtr(l.Tunnel.OKey)) {
 			continue
 		}
-		errs.Add("remote_endpoint", CodeEndpointConflict,
-			i18n.T(ctx, "The interface %q on this system already uses this combination of endpoints "+
-				"and keys, though the panel does not manage it. Adopt it or change the key.", l.Name),
-			map[string]any{"interface_name": l.Name, "adopt_path": v.AdoptPath})
+		if in.Kind() == link.KindESP {
+			errs.Add("remote_endpoint", CodeEndpointConflict,
+				i18n.T(ctx, "The interface %q on this system already uses these endpoints with the same inner addresses, so it would derive the same ESP security associations, though the panel does not manage it. Adopt it or change the inner addresses.", l.Name),
+				map[string]any{"interface_name": l.Name, "adopt_path": v.AdoptPath})
+		} else {
+			errs.Add("remote_endpoint", CodeEndpointConflict,
+				i18n.T(ctx, "The interface %q on this system already uses this combination of endpoints "+
+					"and keys, though the panel does not manage it. Adopt it or change the key.", l.Name),
+				map[string]any{"interface_name": l.Name, "adopt_path": v.AdoptPath})
+		}
 		return
 	}
+}
+
+// sameTunnelIdentity reports whether two tunnels would collide at the kernel
+// level. GRE tunnels collide on (endpoints, keys); ESP tunnels collide on
+// (endpoints, SPIs), and the SPIs are derived from the endpoints and the
+// inner address pair, so the inner pair is what is compared.
+func sameTunnelIdentity(in TunnelInput, existing ExistingTunnel) bool {
+	if !sameEndpointPair(in, existing) {
+		return false
+	}
+	if in.Kind() == link.KindESP {
+		inLocal, inRemote := espInnerPair(in.Addresses)
+		exLocal, exRemote := espInnerPair(existing.Addresses)
+		return sameEspSPIs(in.LocalEndpoint, in.RemoteEndpoint, inLocal, inRemote,
+			existing.LocalEndpoint, existing.RemoteEndpoint, exLocal, exRemote)
+	}
+	return sameKeys(in.IKey, in.OKey, existing.IKey, existing.OKey)
+}
+
+// sameEspSPIs reports whether two endpoint-plus-inner pairs derive the same
+// SPI set, comparing the set rather than the direction, because the two
+// tunnels may list their endpoints in opposite orders.
+func sameEspSPIs(localA, remoteA, innerLocalA, innerRemoteA, localB, remoteB, innerLocalB, innerRemoteB string) bool {
+	outA, inA, errA := link.EspSPIs(link.EspIdentity{Local: localA, Remote: remoteA, InnerLocal: innerLocalA, InnerRemote: innerRemoteA})
+	outB, inB, errB := link.EspSPIs(link.EspIdentity{Local: localB, Remote: remoteB, InnerLocal: innerLocalB, InnerRemote: innerRemoteB})
+	if errA != nil || errB != nil {
+		return false
+	}
+	return (outA == outB && inA == inB) || (outA == inB && inA == outB)
+}
+
+// espInnerPair returns the inner address pair of an address list: the local
+// inner address and the peer's, from the primary row.
+func espInnerPair(addresses []AddressInput) (string, string) {
+	for _, a := range addresses {
+		if a.IsPrimary {
+			return a.Address, a.PeerAddress
+		}
+	}
+	if len(addresses) > 0 {
+		return addresses[0].Address, addresses[0].PeerAddress
+	}
+	return "", ""
+}
+
+// sameEspInnerAddresses reports whether an ESP request's inner pair matches
+// a live interface's addresses, which is how an unmanaged ESP tunnel is
+// recognised: the kernel does not expose the SPIs of a foreign interface,
+// but the inner addresses it carries are the other half of the identity.
+func sameEspInnerAddresses(want []AddressInput, got []link.Address) bool {
+	wantLocal, wantRemote := espInnerPair(want)
+	if wantLocal == "" && wantRemote == "" {
+		return false
+	}
+	for _, a := range got {
+		if a.Address == wantLocal || a.Address == wantRemote {
+			return true
+		}
+	}
+	return false
 }
 
 func keyPtr(v *uint32) *int64 {

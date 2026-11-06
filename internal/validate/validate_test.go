@@ -803,3 +803,122 @@ func hasWarning(res Result, code string) bool {
 	}
 	return false
 }
+
+// ------------------------------------------------------------- ESP tunnels
+
+func validEspInput() TunnelInput {
+	key := "aabbccddeeff00112233445566778899aabbccdd"
+	return TunnelInput{
+		TunnelTypeID:      model.TunnelTypeESP,
+		TunnelSideID:      model.TunnelSideA,
+		PersistenceTypeID: model.PersistenceTypeSystemd,
+		InterfaceName:     "esp-a-1",
+		LocalEndpoint:     "203.0.113.10",
+		RemoteEndpoint:    "198.51.100.20",
+		Ttl:               255,
+		Tos:               "inherit",
+		Mtu:               1350,
+		EspKey:            &key,
+		Addresses: []AddressInput{
+			{Address: "10.12.11.1", PrefixLength: 30, PeerAddress: "10.12.11.2", IsPrimary: true},
+		},
+		IsEnabled: true,
+	}
+}
+
+func TestEspKeyRules(t *testing.T) {
+	// A short key is refused.
+	in := validEspInput()
+	short := "aabbcc"
+	in.EspKey = &short
+	if errs := ValidateStatic(in); !errs.Has("esp_key") {
+		t.Fatalf("a short ESP key was accepted: %+v", errs.Fields)
+	}
+	// A non-hexadecimal key is refused.
+	in = validEspInput()
+	bad := strings.Repeat("z", 40)
+	in.EspKey = &bad
+	if errs := ValidateStatic(in); !errs.Has("esp_key") {
+		t.Fatalf("a non-hexadecimal ESP key was accepted: %+v", errs.Fields)
+	}
+	// No key at all is accepted: the panel generates one at creation.
+	in = validEspInput()
+	in.EspKey = nil
+	if errs := ValidateStatic(in); !errs.Empty() {
+		t.Fatalf("an ESP tunnel with no key was refused: %+v", errs.Fields)
+	}
+	// A well-formed key passes.
+	if errs := ValidateStatic(validEspInput()); !errs.Empty() {
+		t.Fatalf("a valid ESP tunnel was refused: %+v", errs.Fields)
+	}
+}
+
+func TestEspRejectsGreFields(t *testing.T) {
+	in := validEspInput()
+	in.IKey = i64(1234)
+	if errs := ValidateStatic(in); !errs.Has("ikey") {
+		t.Fatalf("a GRE key on an ESP tunnel was accepted: %+v", errs.Fields)
+	}
+	in = validEspInput()
+	in.HasInputChecksum = true
+	if errs := ValidateStatic(in); !errs.Has("has_input_checksum") {
+		t.Fatalf("a GRE checksum on an ESP tunnel was accepted: %+v", errs.Fields)
+	}
+	in = validEspInput()
+	in.HopLimit = i64(64)
+	if errs := ValidateStatic(in); !errs.Has("hop_limit") {
+		t.Fatalf("a hop limit on an ESP tunnel was accepted: %+v", errs.Fields)
+	}
+}
+
+func TestEspNeedsSystemdPersistence(t *testing.T) {
+	in := validEspInput()
+	in.PersistenceTypeID = model.PersistenceTypeNetworkd
+	if errs := ValidateStatic(in); !errs.Has("persistence_type_id") {
+		t.Fatalf("an ESP tunnel with networkd persistence was accepted: %+v", errs.Fields)
+	}
+}
+
+func TestEspEndpointsMustBeIPv4(t *testing.T) {
+	in := validEspInput()
+	in.LocalEndpoint = "2001:db8::10"
+	in.RemoteEndpoint = "2001:db8::20"
+	if errs := ValidateStatic(in); !errs.Has("local_endpoint") {
+		t.Fatalf("IPv6 endpoints on an ESP tunnel were accepted: %+v", errs.Fields)
+	}
+}
+
+func TestDuplicateEspInnerPairIsRefusedInEitherDirection(t *testing.T) {
+	base := validEspInput()
+
+	same := &fakeRepo{tunnels: []ExistingTunnel{{
+		TunnelID: 3, InterfaceName: "esp-a-9",
+		LocalEndpoint: base.LocalEndpoint, RemoteEndpoint: base.RemoteEndpoint,
+		Addresses: []AddressInput{{Address: "10.12.11.1", PrefixLength: 30, PeerAddress: "10.12.11.2", IsPrimary: true}},
+	}}}
+	v, _ := newValidator(t, same, nil)
+	_, err := v.Validate(context.Background(), base)
+	expectCode(t, err, "remote_endpoint", CodeEndpointConflict)
+
+	// Swapped endpoints and swapped inner addresses are the same tunnel.
+	reversed := &fakeRepo{tunnels: []ExistingTunnel{{
+		TunnelID: 4, InterfaceName: "esp-b-9",
+		LocalEndpoint: base.RemoteEndpoint, RemoteEndpoint: base.LocalEndpoint,
+		Addresses: []AddressInput{{Address: "10.12.11.2", PrefixLength: 30, PeerAddress: "10.12.11.1", IsPrimary: true}},
+	}}}
+	v, _ = newValidator(t, reversed, nil)
+	_, err = v.Validate(context.Background(), base)
+	expectCode(t, err, "remote_endpoint", CodeEndpointConflict)
+
+	// A different inner subnet makes it a different tunnel, which the
+	// kernel allows.
+	other := &fakeRepo{tunnels: []ExistingTunnel{{
+		TunnelID: 5, InterfaceName: "esp-a-8",
+		LocalEndpoint: base.LocalEndpoint, RemoteEndpoint: base.RemoteEndpoint,
+		Addresses: []AddressInput{{Address: "10.12.12.1", PrefixLength: 30, PeerAddress: "10.12.12.2", IsPrimary: true}},
+	}}}
+	v, _ = newValidator(t, other, nil)
+	if _, err := v.Validate(context.Background(), base); err != nil {
+		t.Fatalf("a differing inner subnet must not collide: %v", err)
+	}
+}

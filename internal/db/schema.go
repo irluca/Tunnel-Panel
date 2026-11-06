@@ -71,6 +71,7 @@ var entityDDL = []string{
 		Mtu  INTEGER NOT NULL DEFAULT 1472,
 		IKey INTEGER,
 		OKey INTEGER,
+		EspKey TEXT,
 
 		HasInputChecksum   INTEGER NOT NULL DEFAULT 0,
 		HasOutputChecksum  INTEGER NOT NULL DEFAULT 0,

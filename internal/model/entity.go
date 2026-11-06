@@ -87,6 +87,12 @@ type Tunnel struct {
 	IKey *int64 `json:"ikey"`
 	OKey *int64 `json:"okey"`
 
+	// EspKey is the pre-shared AES-128-GCM key of an ESP tunnel, 40
+	// hexadecimal characters (16 bytes of key plus 4 bytes of salt). It is a
+	// credential, never serialised: the pairing code is the only way it
+	// leaves this host, and the audit log redacts it.
+	EspKey *string `json:"-"`
+
 	HasInputChecksum   bool `json:"has_input_checksum"`
 	HasOutputChecksum  bool `json:"has_output_checksum"`
 	HasInputSequence   bool `json:"has_input_sequence"`

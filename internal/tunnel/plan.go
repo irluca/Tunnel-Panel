@@ -197,7 +197,39 @@ func SpecOf(rec Record) link.TunnelSpec {
 		limit := int(*rec.EncapLimit)
 		spec.EncapLimit = &limit
 	}
+	if rec.TunnelTypeID == model.TunnelTypeESP {
+		if rec.EspKey != nil {
+			// A stored key passed validation when it was written, so a
+			// decode failure here means a corrupt row; the link layer
+			// rejects the missing key with a clear error at apply time.
+			if key, err := link.ParseEspKey(*rec.EspKey); err == nil {
+				spec.EspKey = key
+			}
+		}
+		innerLocal, innerRemote := espInnerPair(rec)
+		if out, in, err := link.EspSPIs(link.EspIdentity{
+			Local: rec.LocalEndpoint, Remote: rec.RemoteEndpoint,
+			InnerLocal: innerLocal, InnerRemote: innerRemote,
+		}); err == nil {
+			spec.EspSPIOut, spec.EspSPIIn = out, in
+		}
+		spec.EspIfID = link.EspIfID(rec.LocalEndpoint, rec.RemoteEndpoint, rec.InterfaceName)
+	}
 	return spec
+}
+
+// espInnerPair returns the inner address pair of a tunnel record: the local
+// inner address and the peer's, from the primary address row.
+func espInnerPair(rec Record) (local, remote string) {
+	for _, a := range rec.Addresses {
+		if a.IsPrimary {
+			return a.Address, derefString(a.PeerAddress)
+		}
+	}
+	if len(rec.Addresses) > 0 {
+		return rec.Addresses[0].Address, derefString(rec.Addresses[0].PeerAddress)
+	}
+	return "", ""
 }
 
 // SpecOfInput builds the link specification from a request, for previewing a
@@ -261,6 +293,7 @@ func recordFromInput(in validate.TunnelInput) model.Tunnel {
 		Mtu:               in.Mtu,
 		IKey:              in.IKey,
 		OKey:              in.OKey,
+		EspKey:            in.EspKey,
 
 		HasInputChecksum:  in.HasInputChecksum,
 		HasOutputChecksum: in.HasOutputChecksum,

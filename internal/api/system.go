@@ -176,6 +176,7 @@ func (s *Server) handleCapabilities(w http.ResponseWriter, r *http.Request) {
 		for _, id := range []int64{
 			model.TunnelTypeGRE, model.TunnelTypeGRETAP,
 			model.TunnelTypeIP6GRE, model.TunnelTypeIP6GRETAP,
+			model.TunnelTypeESP,
 		} {
 			kind := model.TunnelTypeKind(id)
 			entry := support[kind]
@@ -190,6 +191,7 @@ func (s *Server) handleCapabilities(w http.ResponseWriter, r *http.Request) {
 		for _, id := range []int64{
 			model.TunnelTypeGRE, model.TunnelTypeGRETAP,
 			model.TunnelTypeIP6GRE, model.TunnelTypeIP6GRETAP,
+			model.TunnelTypeESP,
 		} {
 			types = append(types, tunnelTypeCapability{
 				TunnelTypeID: id, Title: strings.ToUpper(model.TunnelTypeKind(id)),

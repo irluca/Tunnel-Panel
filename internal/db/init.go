@@ -209,6 +209,10 @@ type columnAddition struct {
 var columnAdditions = []columnAddition{
 	{"Tunnel", "DisplayName", "TEXT"},
 
+	// The ESP pre-shared key. NULL on every tunnel that predates ESP and on
+	// every GRE tunnel, which has no such key.
+	{"Tunnel", "EspKey", "TEXT"},
+
 	// Monitoring a forwarding rule's destinations. Every one is optional and
 	// inherits from the rule, which inherits from the panel-wide setting, so
 	// an installation that predates them behaves exactly as it did.

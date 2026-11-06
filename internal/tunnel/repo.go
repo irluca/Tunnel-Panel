@@ -37,7 +37,7 @@ type Record struct {
 const tunnelColumns = `
 	TunnelID, TunnelTypeID, TunnelSideID, PersistenceTypeID, InterfaceName, DisplayName, TunnelNumber,
 	LocalEndpoint, RemoteEndpoint, BindDevice,
-	Ttl, Tos, Mtu, IKey, OKey,
+	Ttl, Tos, Mtu, IKey, OKey, EspKey,
 	HasInputChecksum, HasOutputChecksum, HasInputSequence, HasOutputSequence,
 	IsPathMtuDiscovery, IsIgnoreDf, FwMark, TxQueueLength,
 	HopLimit, EncapLimit, TrafficClass, FlowLabel,
@@ -77,6 +77,7 @@ func scanTunnel(scan func(...any) error) (model.Tunnel, error) {
 		tunnelNumber, ikey, okey, fwMark, txQueueLength     sql.NullInt64
 		hopLimit, encapLimit, addressPoolID                 sql.NullInt64
 		displayName, bindDevice, trafficClass, flowLabel    sql.NullString
+		espKey                                              sql.NullString
 		lastAppliedDate, lastApplyError, note, tagsJson     sql.NullString
 		monitorTarget                                       sql.NullString
 		monitorInterval, monitorTimeout, monitorDegradedRtt sql.NullFloat64
@@ -94,7 +95,7 @@ func scanTunnel(scan func(...any) error) (model.Tunnel, error) {
 	err := scan(
 		&t.TunnelID, &t.TunnelTypeID, &t.TunnelSideID, &t.PersistenceTypeID, &t.InterfaceName, &displayName, &tunnelNumber,
 		&t.LocalEndpoint, &t.RemoteEndpoint, &bindDevice,
-		&t.Ttl, &t.Tos, &t.Mtu, &ikey, &okey,
+		&t.Ttl, &t.Tos, &t.Mtu, &ikey, &okey, &espKey,
 		&hasInputChecksum, &hasOutputChecksum, &hasInputSequence, &hasOutputSequence,
 		&isPathMtuDiscovery, &isIgnoreDf, &fwMark, &txQueueLength,
 		&hopLimit, &encapLimit, &trafficClass, &flowLabel,
@@ -114,6 +115,7 @@ func scanTunnel(scan func(...any) error) (model.Tunnel, error) {
 	t.BindDevice = nullString(bindDevice)
 	t.IKey = nullInt(ikey)
 	t.OKey = nullInt(okey)
+	t.EspKey = nullString(espKey)
 	t.HasInputChecksum = hasInputChecksum != 0
 	t.HasOutputChecksum = hasOutputChecksum != 0
 	t.HasInputSequence = hasInputSequence != 0
@@ -316,7 +318,7 @@ func (r *Repo) Insert(ctx context.Context, in validate.TunnelInput, isManaged, i
 		INSERT INTO Tunnel (
 			TunnelTypeID, TunnelSideID, PersistenceTypeID, InterfaceName, DisplayName, TunnelNumber,
 			LocalEndpoint, RemoteEndpoint, BindDevice,
-			Ttl, Tos, Mtu, IKey, OKey,
+			Ttl, Tos, Mtu, IKey, OKey, EspKey,
 			HasInputChecksum, HasOutputChecksum, HasInputSequence, HasOutputSequence,
 			IsPathMtuDiscovery, IsIgnoreDf, FwMark, TxQueueLength,
 			HopLimit, EncapLimit, TrafficClass, FlowLabel,
@@ -326,10 +328,10 @@ func (r *Repo) Insert(ctx context.Context, in validate.TunnelInput, isManaged, i
 			MonitorStateChangeSamples,
 			ApplyStatusID, CreatedDate, UpdatedDate, IsDeleted
 		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-		          ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
+		          ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
 		in.TunnelTypeID, in.TunnelSideID, in.PersistenceTypeID, in.InterfaceName, emptyToNull(in.DisplayName), in.TunnelNumber,
 		in.LocalEndpoint, in.RemoteEndpoint, emptyToNull(in.BindDevice),
-		in.Ttl, in.Tos, in.Mtu, in.IKey, in.OKey,
+		in.Ttl, in.Tos, in.Mtu, in.IKey, in.OKey, in.EspKey,
 		boolInt(in.HasInputChecksum), boolInt(in.HasOutputChecksum),
 		boolInt(in.HasInputSequence), boolInt(in.HasOutputSequence),
 		boolInt(in.IsPathMtuDiscovery), boolInt(in.IsIgnoreDf), in.FwMark, in.TxQueueLength,
@@ -369,7 +371,7 @@ func (r *Repo) Update(ctx context.Context, id int64, in validate.TunnelInput, is
 		UPDATE Tunnel SET
 			TunnelTypeID = ?, TunnelSideID = ?, PersistenceTypeID = ?, InterfaceName = ?, DisplayName = ?, TunnelNumber = ?,
 			LocalEndpoint = ?, RemoteEndpoint = ?, BindDevice = ?,
-			Ttl = ?, Tos = ?, Mtu = ?, IKey = ?, OKey = ?,
+			Ttl = ?, Tos = ?, Mtu = ?, IKey = ?, OKey = ?, EspKey = ?,
 			HasInputChecksum = ?, HasOutputChecksum = ?, HasInputSequence = ?, HasOutputSequence = ?,
 			IsPathMtuDiscovery = ?, IsIgnoreDf = ?, FwMark = ?, TxQueueLength = ?,
 			HopLimit = ?, EncapLimit = ?, TrafficClass = ?, FlowLabel = ?,
@@ -381,7 +383,7 @@ func (r *Repo) Update(ctx context.Context, id int64, in validate.TunnelInput, is
 		WHERE TunnelID = ? AND IsDeleted = 0`,
 		in.TunnelTypeID, in.TunnelSideID, in.PersistenceTypeID, in.InterfaceName, emptyToNull(in.DisplayName), in.TunnelNumber,
 		in.LocalEndpoint, in.RemoteEndpoint, emptyToNull(in.BindDevice),
-		in.Ttl, in.Tos, in.Mtu, in.IKey, in.OKey,
+		in.Ttl, in.Tos, in.Mtu, in.IKey, in.OKey, in.EspKey,
 		boolInt(in.HasInputChecksum), boolInt(in.HasOutputChecksum),
 		boolInt(in.HasInputSequence), boolInt(in.HasOutputSequence),
 		boolInt(in.IsPathMtuDiscovery), boolInt(in.IsIgnoreDf), in.FwMark, in.TxQueueLength,

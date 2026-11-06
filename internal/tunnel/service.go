@@ -335,7 +335,14 @@ func (s *Service) ApplyDefaults(ctx context.Context, in *validate.TunnelInput) e
 		in.PersistenceTypeID = s.settings.Int("tunnel.default_persistence")
 	}
 	if in.Mtu == 0 {
-		in.Mtu = s.settings.Int("tunnel.default_mtu")
+		// An ESP tunnel defaults to 1350 rather than the GRE default: the
+		// ESP encapsulation costs 54 bytes, and 1350 leaves room for an
+		// underlay that is not quite 1500 without fragmenting.
+		if in.TunnelTypeID == model.TunnelTypeESP {
+			in.Mtu = validate.EspDefaultMtu
+		} else {
+			in.Mtu = s.settings.Int("tunnel.default_mtu")
+		}
 	}
 	if in.Ttl == 0 {
 		in.Ttl = s.settings.Int("tunnel.default_ttl")
@@ -352,6 +359,20 @@ func (s *Service) ApplyDefaults(ctx context.Context, in *validate.TunnelInput) e
 			in.IKey = &value
 			second := *key
 			in.OKey = &second
+		}
+	}
+	// An ESP tunnel's key is generated here when the operator did not supply
+	// one, for the same reason: a tunnel with no shared secret cannot be
+	// paired. Unlike the GRE default it is random per tunnel, never a shared
+	// constant, and it is generated on creation only — on an update the
+	// stored key stands unless the operator supplies a new one.
+	if in.TunnelID == 0 && in.TunnelTypeID == model.TunnelTypeESP {
+		if in.EspKey == nil || strings.TrimSpace(*in.EspKey) == "" {
+			key, err := link.GenerateEspKey()
+			if err != nil {
+				return err
+			}
+			in.EspKey = &key
 		}
 	}
 

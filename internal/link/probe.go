@@ -21,6 +21,13 @@ const GreModule = "ip_gre"
 // Ip6GreModule provides the IPv6 GRE variants.
 const Ip6GreModule = "ip6_gre"
 
+// XfrmInterfaceModule provides the xfrm interfaces an ESP tunnel is built on.
+const XfrmInterfaceModule = "xfrm_interface"
+
+// Esp4Module provides IPv4 ESP. It is usually built in or autoloaded with the
+// first security association; like ip_gre, it not being loaded is normal.
+const Esp4Module = "esp4"
+
 // Availability describes what the running kernel and this build can do.
 type Availability struct {
 	// NetlinkAvailable reports whether a netlink route socket could be opened.
@@ -38,8 +45,10 @@ type Availability struct {
 func Probe() Availability {
 	a := Availability{
 		LoadedModules: map[string]bool{
-			GreModule:    ModuleLoaded(GreModule),
-			Ip6GreModule: ModuleLoaded(Ip6GreModule),
+			GreModule:           ModuleLoaded(GreModule),
+			Ip6GreModule:        ModuleLoaded(Ip6GreModule),
+			XfrmInterfaceModule: ModuleLoaded(XfrmInterfaceModule),
+			Esp4Module:          ModuleLoaded(Esp4Module),
 		},
 		KernelRelease: KernelRelease(),
 	}

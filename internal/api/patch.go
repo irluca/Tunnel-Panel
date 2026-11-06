@@ -112,6 +112,9 @@ type tunnelPatch struct {
 	Mtu  *int64      `json:"mtu,omitempty"`
 	IKey nullableInt `json:"ikey,omitempty"`
 	OKey nullableInt `json:"okey,omitempty"`
+	// EspKey is the pre-shared ESP key. Setting it rotates the key; the
+	// value is never returned by the API.
+	EspKey *string `json:"esp_key,omitempty"`
 
 	HasInputChecksum  *bool `json:"has_input_checksum,omitempty"`
 	HasOutputChecksum *bool `json:"has_output_checksum,omitempty"`
@@ -195,6 +198,9 @@ func (p tunnelPatch) applyTo(in *validate.TunnelInput) {
 	setInt(&in.Mtu, p.Mtu)
 	setNullable(&in.IKey, p.IKey)
 	setNullable(&in.OKey, p.OKey)
+	if p.EspKey != nil {
+		in.EspKey = p.EspKey
+	}
 
 	setBool(&in.HasInputChecksum, p.HasInputChecksum)
 	setBool(&in.HasOutputChecksum, p.HasOutputChecksum)
