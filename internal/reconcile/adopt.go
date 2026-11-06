@@ -50,7 +50,12 @@ const (
 	WarnLegacyUnitNotOwned = "LEGACY_UNIT_NOT_OWNED"
 	WarnNoPeerAddress      = "NO_PEER_ADDRESS"
 	WarnPublicRangeAdopted = "PUBLIC_RANGE_ADOPTED"
-	WarnUnitNotActive      = "ADOPTED_UNIT_NOT_ACTIVE"
+	// WarnEspKeyRegenerated is raised when an ESP tunnel is adopted: the key
+	// material is not readable from the kernel, so the panel generates a
+	// fresh key and the far end must be given it before the tunnel carries
+	// anything again.
+	WarnEspKeyRegenerated = "ESP_KEY_REGENERATED"
+	WarnUnitNotActive     = "ADOPTED_UNIT_NOT_ACTIVE"
 )
 
 // Adopt imports an existing tunnel into the panel (§12).
@@ -258,6 +263,26 @@ func (s *Service) importFrom(ctx context.Context, observed link.Link, req AdoptR
 	}
 
 	var warnings []validate.Warning
+	// An ESP tunnel's key is not readable from the kernel — `ip xfrm state`
+	// shows the algorithm and the SPI, never the key material — so the
+	// adopted tunnel gets a fresh key here (adoption bypasses the service's
+	// creation path, which is where a key is normally generated) and the far
+	// end must be re-paired with it. Without the warning the tunnel would
+	// come up looking healthy and carry nothing, which is exactly the silent
+	// failure adoption is supposed to prevent.
+	if observed.Kind == link.KindESP {
+		warnings = append(warnings, validate.Warning{
+			Code:  WarnEspKeyRegenerated,
+			Field: "esp_key",
+			Message: i18n.T(ctx, "The ESP key cannot be read from the kernel, so this tunnel gets a fresh "+
+				"one. Give the far end the new key before it can carry traffic again."),
+		})
+		key, err := link.GenerateEspKey()
+		if err != nil {
+			return validate.TunnelInput{}, nil, err
+		}
+		in.EspKey = &key
+	}
 	for _, addr := range observed.Addresses {
 		if addr.Scope == "link" {
 			continue // the kernel's own link-local address, not configuration

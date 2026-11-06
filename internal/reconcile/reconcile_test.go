@@ -134,6 +134,25 @@ func (h *harness) legacyTunnel(t *testing.T, name string, number int, address st
 	})
 }
 
+// espTunnel adds an ESP tunnel exactly as the kernel reports one: an xfrm
+// interface with its associations and policies, but no key — the key material
+// is never readable from the kernel.
+func (h *harness) espTunnel(t *testing.T, name string, number int, address string) {
+	t.Helper()
+	h.links.AddLink(link.Link{
+		Name: name, Index: 10 + number, MTU: 1350, Kind: link.KindESP,
+		OperState: "UNKNOWN", IsUp: true, IsLowerUp: true, IsRunning: true,
+		Flags: []string{"POINTOPOINT", "NOARP", "UP", "LOWER_UP"},
+		Tunnel: &link.TunnelAttrs{
+			Local: "203.0.113.10", Remote: "198.51.100.20", Ttl: 255,
+			Esp: &link.EspAttrs{IfID: 3751148271, SPIs: []uint32{0x5a4536f5, 0xa936c69c}, PoliciesPresent: true},
+		},
+		Addresses: []link.Address{
+			{Address: address, PrefixLength: 30, Family: link.FamilyIPv4, Scope: "global"},
+		},
+	})
+}
+
 // legacyUnit writes the unit file the old script produced, defects and all.
 func (h *harness) legacyUnit(t *testing.T, name string) string {
 	t.Helper()
@@ -414,6 +433,42 @@ func TestAdoptImportsFromTheKernelWithoutTouchingTheInterface(t *testing.T) {
 	}
 	if item := findItem(report, "gre-ir-7"); item.Status != StatusInSync {
 		t.Fatalf("after adoption the tunnel is %q with diffs %+v", item.Status, item.Diffs)
+	}
+}
+
+// An ESP tunnel's key is not readable from the kernel, so adopting one
+// generates a fresh key and warns that the far end must be re-paired.
+func TestAdoptEspRegeneratesTheKeyAndWarns(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+
+	h.espTunnel(t, "esp-a-7", 7, "172.17.7.1")
+	h.links.Reset()
+
+	result, err := h.service.Adopt(ctx, AdoptRequest{InterfaceName: "esp-a-7"})
+	if err != nil {
+		t.Fatalf("adoption failed: %v", err)
+	}
+
+	rec := result.Tunnel
+	if rec.TunnelTypeID != model.TunnelTypeESP {
+		t.Fatalf("the adopted tunnel is type %d, want ESP", rec.TunnelTypeID)
+	}
+	if rec.EspKey == nil || len(*rec.EspKey) != 40 {
+		t.Fatalf("no fresh ESP key was generated: %v", rec.EspKey)
+	}
+	if rec.IKey != nil || rec.OKey != nil {
+		t.Fatalf("an ESP tunnel adopted with GRE keys: %+v", rec)
+	}
+
+	var regenerated bool
+	for _, w := range result.Warnings {
+		if w.Code == WarnEspKeyRegenerated {
+			regenerated = true
+		}
+	}
+	if !regenerated {
+		t.Fatalf("no warning that the key was regenerated: %+v", result.Warnings)
 	}
 }
 

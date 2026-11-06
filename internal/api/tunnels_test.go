@@ -933,7 +933,8 @@ func TestCapabilitiesReportTheLiveLinkManager(t *testing.T) {
 	if !caps.Complete {
 		t.Fatal("with the link manager wired the capabilities must be a live probe")
 	}
-	if len(caps.TunnelTypes) != 4 {
+	// Five kinds: GRE, GRETAP, IP6GRE, IP6GRETAP and ESP.
+	if len(caps.TunnelTypes) != 5 {
 		t.Fatalf("tunnel types = %+v", caps.TunnelTypes)
 	}
 	for _, tt := range caps.TunnelTypes {

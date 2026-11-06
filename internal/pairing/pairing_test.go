@@ -63,8 +63,40 @@ func TestRoundTrip(t *testing.T) {
 	}
 }
 
-// The whole purpose: the receiving server gets the mirror image, with the
-// endpoints and the addresses swapped and everything else identical (§5.4).
+// The ESP key is the one secret that must be identical on both ends, so it
+// travels in the code like the GRE keys do — and the summary says only that
+// it is there, never what it is.
+func TestEspKeySurvivesTheRoundTrip(t *testing.T) {
+	key := "00112233445566778899aabbccddeeff00112233"
+	p := samplePayload()
+	p.TunnelTypeID = model.TunnelTypeESP
+	p.IKey = nil
+	p.OKey = nil
+	p.EspKey = &key
+
+	code, err := Encode(p)
+	if err != nil {
+		t.Fatalf("encoding failed: %v", err)
+	}
+	decoded, err := Decode(code)
+	if err != nil {
+		t.Fatalf("decoding failed: %v", err)
+	}
+	if decoded.EspKey == nil || *decoded.EspKey != key {
+		t.Fatalf("the ESP key did not survive: %v", decoded.EspKey)
+	}
+	in := decoded.Flipped()
+	if in.EspKey == nil || *in.EspKey != key {
+		t.Fatalf("the flipped tunnel lost the ESP key: %v", in.EspKey)
+	}
+	if in.IKey != nil || in.OKey != nil {
+		t.Fatalf("an ESP tunnel flipped with GRE keys: %+v", in)
+	}
+	summary := decoded.Summarise()
+	if !summary.EspKeyPresent {
+		t.Fatal("the summary does not say the shared secret is there")
+	}
+}
 func TestFlipMirrorsTheSide(t *testing.T) {
 	code, err := Encode(samplePayload())
 	if err != nil {

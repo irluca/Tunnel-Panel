@@ -463,6 +463,7 @@ func (s *Server) handlePairingCode(w http.ResponseWriter, r *http.Request) {
 		Mtu:             rec.Mtu,
 		IKey:            rec.IKey,
 		OKey:            rec.OKey,
+		EspKey:          rec.EspKey,
 
 		HasInputChecksum:  rec.HasInputChecksum,
 		HasOutputChecksum: rec.HasOutputChecksum,

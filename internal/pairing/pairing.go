@@ -71,6 +71,12 @@ type Payload struct {
 	Mtu  int64  `json:"mtu"`
 	IKey *int64 `json:"ikey,omitempty"`
 	OKey *int64 `json:"okey,omitempty"`
+	// EspKey is the pre-shared AES-128-GCM key of an ESP tunnel. Like the
+	// GRE keys it must be identical on both ends or the tunnel comes up and
+	// carries nothing, so it travels in the code. The SPIs need no transfer:
+	// both ends derive the same pair from the endpoints and the inner
+	// addresses.
+	EspKey *string `json:"esp_key,omitempty"`
 
 	HasInputChecksum  bool `json:"icsum,omitempty"`
 	HasOutputChecksum bool `json:"ocsum,omitempty"`
@@ -235,6 +241,7 @@ func (p Payload) Flipped() validate.TunnelInput {
 		Mtu:            p.Mtu,
 		IKey:           p.IKey,
 		OKey:           p.OKey,
+		EspKey:         p.EspKey,
 
 		HasInputChecksum:  p.HasInputChecksum,
 		HasOutputChecksum: p.HasOutputChecksum,
@@ -285,6 +292,7 @@ type Summary struct {
 	Ttl            int64  `json:"ttl"`
 	IKey           string `json:"ikey"`
 	OKey           string `json:"okey"`
+	EspKeyPresent  bool   `json:"esp_key_present,omitempty"`
 }
 
 // Summarise describes the flipped tunnel.
@@ -299,5 +307,8 @@ func (p Payload) Summarise() Summary {
 		Ttl:            p.Ttl,
 		IKey:           validate.FormatGreKey(p.IKey),
 		OKey:           validate.FormatGreKey(p.OKey),
+		// The key itself is never shown: the summary only says whether the
+		// shared secret travelled with the code.
+		EspKeyPresent: p.EspKey != nil,
 	}
 }

@@ -530,6 +530,9 @@ export function TunnelFormDialog({
             onOpenChange={setAdvancedOpen}
           >
             <div className="grid gap-3 sm:grid-cols-2">
+              {/* The GRE key is meaningless on an ESP tunnel, which
+                  authenticates with its shared secret instead. */}
+              {form.tunnel_type_id !== TunnelType.ESP ? (
               <Field
                 label={t('tunnel.fields.key')}
                 description={t('tunnel.help.key')}
@@ -583,6 +586,37 @@ export function TunnelFormDialog({
                   </div>
                 )}
               </Field>
+              ) : null}
+
+              {form.tunnel_type_id === TunnelType.ESP ? (
+              <Field
+                label={t('tunnel.fields.espKey')}
+                description={t('tunnel.help.espKey')}
+                error={fieldErrors['esp_key']}
+              >
+                {(props) => (
+                  <div className="flex items-center gap-2">
+                    <TechnicalInput
+                      {...props}
+                      className="flex-1"
+                      value={form.esp_key ?? ''}
+                      onChange={(event) => set('esp_key', event.target.value === '' ? null : event.target.value)}
+                      placeholder="00112233445566778899aabbccddeeff00112233"
+                    />
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      size="icon"
+                      aria-label={t('tunnelForm.randomKey')}
+                      title={t('tunnelForm.randomKey')}
+                      onClick={() => set('esp_key', randomEspKey())}
+                    >
+                      <Dices className="size-4" aria-hidden="true" />
+                    </Button>
+                  </div>
+                )}
+              </Field>
+              ) : null}
 
               <MtuField
                 value={form.mtu}
@@ -1459,6 +1493,7 @@ function defaultsFrom(settings: Record<string, unknown>, used?: Set<number>): Fo
     mtu: number('tunnel.default_mtu', 1472),
     ikey: key,
     okey: key,
+    esp_key: null,
     has_input_checksum: boolean('tunnel.default_csum', false),
     has_output_checksum: boolean('tunnel.default_csum', false),
     has_input_sequence: boolean('tunnel.default_seq', false),
@@ -1492,6 +1527,9 @@ function formFromTunnel(tunnel: Tunnel): FormState {
     mtu: tunnel.mtu,
     ikey: tunnel.ikey,
     okey: tunnel.okey,
+    // The key is never returned by the API, so editing keeps the existing
+    // one unless the operator types a new key here.
+    esp_key: null,
     has_input_checksum: tunnel.has_input_checksum,
     has_output_checksum: tunnel.has_output_checksum,
     has_input_sequence: tunnel.has_input_sequence,
@@ -1555,6 +1593,10 @@ export function toPatch(form: FormState, manual: boolean): Record<string, unknow
     display_name: form.display_name ?? '',
   }
 
+  // The ESP key is only sent when the operator typed one: absent means
+  // "generate one" on create and "keep the existing key" on edit.
+  if (form.esp_key) patch.esp_key = form.esp_key
+
   if (form.interface_name) patch.interface_name = form.interface_name
   if (form.bind_device) patch.bind_device = form.bind_device
 
@@ -1612,6 +1654,17 @@ export function randomGreKey(used: Set<number> = new Set()): number {
     if (!used.has(value)) return value
   }
   return buffer[0] || 1
+}
+
+/**
+ * A fresh ESP key: 20 random bytes (16 of key, 4 of salt) as 40 hex
+ * characters. It comes from the platform's own generator, like the GRE key
+ * above, because there is no reason for it not to.
+ */
+export function randomEspKey(): string {
+  const buffer = new Uint8Array(20)
+  crypto.getRandomValues(buffer)
+  return Array.from(buffer, (byte) => byte.toString(16).padStart(2, '0')).join('')
 }
 
 /**

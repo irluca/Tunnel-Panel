@@ -487,6 +487,7 @@ export interface TunnelInput {
   mtu: number
   ikey: number | null
   okey: number | null
+  esp_key: string | null
   has_input_checksum: boolean
   has_output_checksum: boolean
   has_input_sequence: boolean
