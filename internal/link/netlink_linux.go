@@ -500,11 +500,15 @@ func convertLink(l netlink.Link) Link {
 
 // normaliseNetlinkKind maps the library's type name onto the panel's, so a
 // plain NIC is "device" and the loopback is "loopback" whichever manager
-// reported it. An xfrm interface is the panel's ESP tunnel.
+// reported it. An xfrm interface is the panel's ESP tunnel, and a tun
+// interface is the relay's end of a GRE-over-WSS tunnel.
 func normaliseNetlinkKind(l netlink.Link) string {
 	kind := l.Type()
 	if kind == "xfrm" {
 		return KindESP
+	}
+	if kind == "tun" {
+		return KindGREWSS
 	}
 	if kind == "device" {
 		if l.Attrs().RawFlags&unix.IFF_LOOPBACK != 0 {

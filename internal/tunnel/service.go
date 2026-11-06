@@ -337,8 +337,11 @@ func (s *Service) ApplyDefaults(ctx context.Context, in *validate.TunnelInput) e
 	if in.Mtu == 0 {
 		// An ESP tunnel defaults to 1350 rather than the GRE default: the
 		// ESP encapsulation costs 54 bytes, and 1350 leaves room for an
-		// underlay that is not quite 1500 without fragmenting.
-		if in.TunnelTypeID == model.TunnelTypeESP {
+		// underlay that is not quite 1500 without fragmenting. A
+		// GRE-over-WSS tunnel takes the same default: the GRE header plus
+		// the TCP, TLS and WebSocket framing of its underlay cost about the
+		// same.
+		if in.TunnelTypeID == model.TunnelTypeESP || in.TunnelTypeID == model.TunnelTypeGREWSS {
 			in.Mtu = validate.EspDefaultMtu
 		} else {
 			in.Mtu = s.settings.Int("tunnel.default_mtu")
@@ -374,6 +377,24 @@ func (s *Service) ApplyDefaults(ctx context.Context, in *validate.TunnelInput) e
 				return err
 			}
 			in.EspKey = &key
+		}
+	}
+
+	// A GRE-over-WSS tunnel's token is generated the same way, and its port
+	// defaults to 443, the HTTPS port a filtering path is least likely to
+	// block. Both are creation-only: on an update the stored values stand
+	// unless the operator supplies new ones.
+	if in.TunnelID == 0 && in.TunnelTypeID == model.TunnelTypeGREWSS {
+		if in.WssToken == nil || strings.TrimSpace(*in.WssToken) == "" {
+			token, err := link.GenerateWssToken()
+			if err != nil {
+				return err
+			}
+			in.WssToken = &token
+		}
+		if in.WssPort == nil {
+			port := int64(link.WssDefaultPort)
+			in.WssPort = &port
 		}
 	}
 
@@ -906,6 +927,9 @@ func mergedInput(rec Record) validate.TunnelInput {
 		// would rewrite the ESP key to NULL and the tunnel would lose the
 		// secret its peer still holds.
 		EspKey: rec.EspKey,
+		// The same, for the WSS token and port.
+		WssToken: rec.WssToken,
+		WssPort:  rec.WssPort,
 
 		HasInputChecksum:  rec.HasInputChecksum,
 		HasOutputChecksum: rec.HasOutputChecksum,

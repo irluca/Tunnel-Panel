@@ -261,3 +261,41 @@ func TestCodeStaysShortEnoughToCopy(t *testing.T) {
 		t.Fatalf("the pairing code is %d characters, which is too long to copy comfortably", len(code))
 	}
 }
+
+func TestWssTokenAndPortSurviveTheRoundTrip(t *testing.T) {
+	token := "00112233445566778899aabbccddeeff"
+	port := int64(8443)
+	p := samplePayload()
+	p.TunnelTypeID = model.TunnelTypeGREWSS
+	p.WssToken = &token
+	p.WssPort = &port
+
+	code, err := Encode(p)
+	if err != nil {
+		t.Fatalf("encoding failed: %v", err)
+	}
+	decoded, err := Decode(code)
+	if err != nil {
+		t.Fatalf("decoding failed: %v", err)
+	}
+	if decoded.WssToken == nil || *decoded.WssToken != token {
+		t.Fatalf("the WSS token did not survive: %v", decoded.WssToken)
+	}
+	if decoded.WssPort == nil || *decoded.WssPort != port {
+		t.Fatalf("the WSS port did not survive: %v", decoded.WssPort)
+	}
+	in := decoded.Flipped()
+	if in.WssToken == nil || *in.WssToken != token {
+		t.Fatalf("the flipped tunnel lost the WSS token: %v", in.WssToken)
+	}
+	if in.WssPort == nil || *in.WssPort != port {
+		t.Fatalf("the flipped tunnel lost the WSS port: %v", in.WssPort)
+	}
+	summary := decoded.Summarise()
+	if !summary.WssTokenPresent {
+		t.Fatal("the summary does not say the shared secret is there")
+	}
+	if summary.WssPort == nil || *summary.WssPort != port {
+		t.Fatalf("the summary lost the WSS port: %v", summary.WssPort)
+	}
+}

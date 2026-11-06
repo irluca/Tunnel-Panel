@@ -228,7 +228,7 @@ func run() error {
 	runner := exec.NewRunner()
 	links := link.Select(link.Options{IPBin: cfg.IPBin, Runner: runner, DevMode: cfg.DevMode})
 	renderer := persist.NewRenderer(cfg.IPBin, lookupBinary("modprobe", persist.DefaultModprobeBin),
-		lookupBinary("ping", persist.DefaultPingBin))
+		lookupBinary("ping", persist.DefaultPingBin)).WithPanelBin(selfBinary())
 	persistStore := persist.NewStore(cfg.SystemdDir, cfg.NetworkdDir, cfg.SystemctlBin, runner)
 
 	// The netfilter backend for the port forwarding subsystem, chosen once at
@@ -834,6 +834,16 @@ func lookupBinary(name, fallback string) string {
 		}
 	}
 	return ""
+}
+
+// selfBinary returns the path to this binary, so a GRE-over-WSS unit can run
+// the relay as `gre-panel relay ...`. It falls back to the conventional
+// install location when the current executable cannot be resolved.
+func selfBinary() string {
+	if path, err := os.Executable(); err == nil && path != "" {
+		return path
+	}
+	return persist.DefaultPanelBin
 }
 
 // pruneRetention drops monitoring history, diagnostic runs and audit entries

@@ -618,6 +618,55 @@ export function TunnelFormDialog({
               </Field>
               ) : null}
 
+              {form.tunnel_type_id === TunnelType.GREWSS ? (
+              <>
+              <Field
+                label={t('tunnel.fields.wssToken')}
+                description={t('tunnel.help.wssToken')}
+                error={fieldErrors['wss_token']}
+              >
+                {(props) => (
+                  <div className="flex items-center gap-2">
+                    <TechnicalInput
+                      {...props}
+                      className="flex-1"
+                      value={form.wss_token ?? ''}
+                      onChange={(event) => set('wss_token', event.target.value === '' ? null : event.target.value)}
+                      placeholder="00112233445566778899aabbccddeeff"
+                    />
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      size="icon"
+                      aria-label={t('tunnelForm.randomKey')}
+                      title={t('tunnelForm.randomKey')}
+                      onClick={() => set('wss_token', randomWssToken())}
+                    >
+                      <Dices className="size-4" aria-hidden="true" />
+                    </Button>
+                  </div>
+                )}
+              </Field>
+              <Field
+                label={t('tunnel.fields.wssPort')}
+                description={t('tunnel.help.wssPort')}
+                error={fieldErrors['wss_port']}
+              >
+                {(props) => (
+                  <TechnicalInput
+                    {...props}
+                    type="number"
+                    min={1}
+                    max={65535}
+                    value={form.wss_port ?? ''}
+                    onChange={(event) => set('wss_port', event.target.value === '' ? null : Number(event.target.value))}
+                    placeholder="443"
+                  />
+                )}
+              </Field>
+              </>
+              ) : null}
+
               <MtuField
                 value={form.mtu}
                 onChange={(value) => set('mtu', value)}
@@ -1494,6 +1543,8 @@ function defaultsFrom(settings: Record<string, unknown>, used?: Set<number>): Fo
     ikey: key,
     okey: key,
     esp_key: null,
+    wss_token: null,
+    wss_port: null,
     has_input_checksum: boolean('tunnel.default_csum', false),
     has_output_checksum: boolean('tunnel.default_csum', false),
     has_input_sequence: boolean('tunnel.default_seq', false),
@@ -1530,6 +1581,10 @@ function formFromTunnel(tunnel: Tunnel): FormState {
     // The key is never returned by the API, so editing keeps the existing
     // one unless the operator types a new key here.
     esp_key: null,
+    // The same, for the WSS token: the port is returned, so editing keeps
+    // the stored one unless the operator changes it.
+    wss_token: null,
+    wss_port: tunnel.wss_port,
     has_input_checksum: tunnel.has_input_checksum,
     has_output_checksum: tunnel.has_output_checksum,
     has_input_sequence: tunnel.has_input_sequence,
@@ -1597,6 +1652,12 @@ export function toPatch(form: FormState, manual: boolean): Record<string, unknow
   // "generate one" on create and "keep the existing key" on edit.
   if (form.esp_key) patch.esp_key = form.esp_key
 
+  // The WSS token follows the same rule. The port is always sent: null
+  // means "the default" on create and "keep the stored port" on edit is
+  // handled by the form, which carries the stored value.
+  if (form.wss_token) patch.wss_token = form.wss_token
+  if (form.wss_port !== null) patch.wss_port = form.wss_port
+
   if (form.interface_name) patch.interface_name = form.interface_name
   if (form.bind_device) patch.bind_device = form.bind_device
 
@@ -1663,6 +1724,17 @@ export function randomGreKey(used: Set<number> = new Set()): number {
  */
 export function randomEspKey(): string {
   const buffer = new Uint8Array(20)
+  crypto.getRandomValues(buffer)
+  return Array.from(buffer, (byte) => byte.toString(16).padStart(2, '0')).join('')
+}
+
+/**
+ * A fresh WSS token: 16 random bytes as 32 hex characters. It comes from the
+ * platform's own generator, like the ESP key above, because there is no
+ * reason for it not to.
+ */
+export function randomWssToken(): string {
+  const buffer = new Uint8Array(16)
   crypto.getRandomValues(buffer)
   return Array.from(buffer, (byte) => byte.toString(16).padStart(2, '0')).join('')
 }

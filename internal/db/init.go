@@ -217,6 +217,9 @@ var columnAdditions = []columnAddition{
 	// and on every tunnel that is not GRE over WSS.
 	{"Tunnel", "WssToken", "TEXT"},
 
+	// The GRE-over-WSS port. NULL means the default, 443.
+	{"Tunnel", "WssPort", "INTEGER"},
+
 	// Monitoring a forwarding rule's destinations. Every one is optional and
 	// inherits from the rule, which inherits from the panel-wide setting, so
 	// an installation that predates them behaves exactly as it did.

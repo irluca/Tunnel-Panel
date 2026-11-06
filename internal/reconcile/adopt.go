@@ -55,7 +55,12 @@ const (
 	// fresh key and the far end must be given it before the tunnel carries
 	// anything again.
 	WarnEspKeyRegenerated = "ESP_KEY_REGENERATED"
-	WarnUnitNotActive     = "ADOPTED_UNIT_NOT_ACTIVE"
+	// WarnWssTokenRegenerated is raised when a GRE-over-WSS tunnel is
+	// adopted: the token lives in the relay's memory, not in the kernel, so
+	// the panel generates a fresh token and the far end must be given it
+	// before the tunnel carries anything again.
+	WarnWssTokenRegenerated = "WSS_TOKEN_REGENERATED"
+	WarnUnitNotActive       = "ADOPTED_UNIT_NOT_ACTIVE"
 )
 
 // Adopt imports an existing tunnel into the panel (§12).
@@ -282,6 +287,22 @@ func (s *Service) importFrom(ctx context.Context, observed link.Link, req AdoptR
 			return validate.TunnelInput{}, nil, err
 		}
 		in.EspKey = &key
+	}
+	// A GRE-over-WSS tunnel's token lives in the relay's memory, not in the
+	// kernel, so the adopted tunnel gets a fresh token the same way, and
+	// the far end must be re-paired with it.
+	if observed.Kind == link.KindGREWSS {
+		warnings = append(warnings, validate.Warning{
+			Code:  WarnWssTokenRegenerated,
+			Field: "wss_token",
+			Message: i18n.T(ctx, "The WSS token cannot be read from the kernel, so this tunnel gets a fresh "+
+				"one. Give the far end the new token before it can carry traffic again."),
+		})
+		token, err := link.GenerateWssToken()
+		if err != nil {
+			return validate.TunnelInput{}, nil, err
+		}
+		in.WssToken = &token
 	}
 	for _, addr := range observed.Addresses {
 		if addr.Scope == "link" {

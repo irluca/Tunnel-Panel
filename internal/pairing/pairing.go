@@ -77,6 +77,12 @@ type Payload struct {
 	// both ends derive the same pair from the endpoints and the inner
 	// addresses.
 	EspKey *string `json:"esp_key,omitempty"`
+	// WssToken is the shared token of a GRE-over-WSS tunnel. It must be
+	// identical on both ends or the far end refuses the connection, so it
+	// travels in the code. The port travels with it: the listening side
+	// serves on it and the dialling side connects to it.
+	WssToken *string `json:"wss_token,omitempty"`
+	WssPort  *int64  `json:"wss_port,omitempty"`
 
 	HasInputChecksum  bool `json:"icsum,omitempty"`
 	HasOutputChecksum bool `json:"ocsum,omitempty"`
@@ -242,6 +248,8 @@ func (p Payload) Flipped() validate.TunnelInput {
 		IKey:           p.IKey,
 		OKey:           p.OKey,
 		EspKey:         p.EspKey,
+		WssToken:       p.WssToken,
+		WssPort:        p.WssPort,
 
 		HasInputChecksum:  p.HasInputChecksum,
 		HasOutputChecksum: p.HasOutputChecksum,
@@ -283,16 +291,18 @@ func (p Payload) Flipped() validate.TunnelInput {
 // Summary is a human-readable description of a decoded code, shown next to the
 // prefilled form so the operator can see what they are about to create.
 type Summary struct {
-	TunnelType     string `json:"tunnel_type"`
-	FromSide       string `json:"from_side"`
-	ToSide         string `json:"to_side"`
-	LocalEndpoint  string `json:"local_endpoint"`
-	RemoteEndpoint string `json:"remote_endpoint"`
-	Mtu            int64  `json:"mtu"`
-	Ttl            int64  `json:"ttl"`
-	IKey           string `json:"ikey"`
-	OKey           string `json:"okey"`
-	EspKeyPresent  bool   `json:"esp_key_present,omitempty"`
+	TunnelType      string `json:"tunnel_type"`
+	FromSide        string `json:"from_side"`
+	ToSide          string `json:"to_side"`
+	LocalEndpoint   string `json:"local_endpoint"`
+	RemoteEndpoint  string `json:"remote_endpoint"`
+	Mtu             int64  `json:"mtu"`
+	Ttl             int64  `json:"ttl"`
+	IKey            string `json:"ikey"`
+	OKey            string `json:"okey"`
+	EspKeyPresent   bool   `json:"esp_key_present,omitempty"`
+	WssTokenPresent bool   `json:"wss_token_present,omitempty"`
+	WssPort         *int64 `json:"wss_port,omitempty"`
 }
 
 // Summarise describes the flipped tunnel.
@@ -309,6 +319,8 @@ func (p Payload) Summarise() Summary {
 		OKey:           validate.FormatGreKey(p.OKey),
 		// The key itself is never shown: the summary only says whether the
 		// shared secret travelled with the code.
-		EspKeyPresent: p.EspKey != nil,
+		EspKeyPresent:   p.EspKey != nil,
+		WssTokenPresent: p.WssToken != nil,
+		WssPort:         p.WssPort,
 	}
 }

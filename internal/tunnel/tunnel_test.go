@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 
@@ -1167,5 +1168,136 @@ func TestDeleteIsGuardedToo(t *testing.T) {
 	}
 	if persist.Exists(path) {
 		t.Fatal("the unit file was not removed after the takeover")
+	}
+}
+
+func greWssRequest() Request {
+	req := request()
+	req.TunnelTypeID = model.TunnelTypeGREWSS
+	return req
+}
+
+// A GRE-over-WSS tunnel is created the same way as an ESP one, but its unit
+// runs the relay rather than issuing ip commands: it is Type=simple with
+// Restart=always, its ExecStart carries the shared token so it is written
+// 0600, and verification must confirm the TUN the relay owns is up with the
+// right MTU and addresses — while confirming it reports no tunnel
+// attributes, because the endpoints and keys live in the relay, not the
+// kernel.
+func TestCreateGreWssAppliesVerifiesAndPersists(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+
+	result := h.mustCreate(t, greWssRequest())
+
+	rec := result.Tunnel
+	if rec.InterfaceName != "gre-wss-a-1" {
+		t.Fatalf("the GRE-over-WSS tunnel is named %q", rec.InterfaceName)
+	}
+	if rec.WssToken == nil || *rec.WssToken == "" {
+		t.Fatal("no WSS token was generated for the tunnel")
+	}
+	if len(*rec.WssToken) != 32 {
+		t.Fatalf("the WSS token is %d characters, want 32", len(*rec.WssToken))
+	}
+	if rec.WssPort == nil || *rec.WssPort != 443 {
+		t.Fatalf("the WSS port is %v, want 443", rec.WssPort)
+	}
+
+	unit := persist.UnitName("gre-wss-a-1")
+	if !persist.Exists(h.unitPath("gre-wss-a-1")) {
+		t.Fatal("the unit file was not written")
+	}
+	if runtime.GOOS != "windows" {
+		info, err := os.Stat(h.unitPath("gre-wss-a-1"))
+		if err != nil {
+			t.Fatalf("the unit could not be stat'd: %v", err)
+		}
+		if info.Mode().Perm() != persist.SecretFileMode {
+			t.Fatalf("unit permissions = %v, want %v", info.Mode().Perm(), persist.SecretFileMode)
+		}
+	}
+	if !h.systemd.IsEnabled(unit) || !h.systemd.IsActive(unit) {
+		t.Fatal("the unit was not enabled and started")
+	}
+
+	// The unit is a long-running relay, not a one-shot ip command.
+	unitText, err := os.ReadFile(h.unitPath("gre-wss-a-1"))
+	if err != nil {
+		t.Fatalf("reading the unit failed: %v", err)
+	}
+	if !strings.Contains(string(unitText), "Type=simple") {
+		t.Fatal("the unit is not Type=simple")
+	}
+	if !strings.Contains(string(unitText), "Restart=always") {
+		t.Fatal("the unit does not restart the relay")
+	}
+	if !strings.Contains(string(unitText), "relay --tun gre-wss-a-1") {
+		t.Fatalf("the unit does not run the relay: %s", unitText)
+	}
+	if !strings.Contains(string(unitText), "--listen 0.0.0.0:443") {
+		t.Fatal("side A does not listen on 443")
+	}
+
+	// The plan's file step carries the secret mode, so a preview shows the
+	// operator what will be written.
+	for _, step := range result.Plan.Steps {
+		if step.Kind == StepFileWrite && step.FileKind == FileSystemdUnit {
+			if step.Mode != persist.SecretFileMode {
+				t.Fatalf("the unit file step has mode %v, want %v", step.Mode, persist.SecretFileMode)
+			}
+		}
+	}
+
+	if !result.Verify.Ok {
+		t.Fatalf("verification failed: %+v", result.Verify.Failures)
+	}
+
+	observed, err := h.links.Get(ctx, "gre-wss-a-1")
+	if err != nil {
+		t.Fatalf("reading the interface failed: %v", err)
+	}
+	if observed.Kind != link.KindGREWSS {
+		t.Fatalf("the interface kind is %q, want %q", observed.Kind, link.KindGREWSS)
+	}
+	if observed.Tunnel != nil {
+		t.Fatal("the TUN reports tunnel attributes, which it should not have")
+	}
+	if observed.MTU != 1350 {
+		t.Fatalf("the TUN MTU is %d, want 1350", observed.MTU)
+	}
+	if !slices.Contains(observed.Flags, "UP") {
+		t.Fatalf("the TUN is not up: %v", observed.Flags)
+	}
+}
+
+// An unrelated edit to a GRE-over-WSS tunnel must not lose its token or its
+// port: the record carries the secret the peer still holds, and rewriting it
+// to NULL would leave the tunnel unable to authenticate.
+func TestUpdateOfAGreWssTunnelKeepsItsTokenAndPort(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+
+	created := h.mustCreate(t, greWssRequest())
+	token := created.Tunnel.WssToken
+	port := created.Tunnel.WssPort
+
+	// An unrelated edit: the merged input carries everything the record
+	// holds, so only the display name changes.
+	update := mergedInput(created.Tunnel)
+	update.DisplayName = "renamed"
+	if _, err := h.service.Update(ctx, created.Tunnel.TunnelID, Request{TunnelInput: update}); err != nil {
+		t.Fatalf("updating the tunnel failed: %v", err)
+	}
+
+	rec, err := h.repo.ByID(ctx, created.Tunnel.TunnelID)
+	if err != nil {
+		t.Fatalf("reading the tunnel failed: %v", err)
+	}
+	if rec.WssToken == nil || *rec.WssToken != *token {
+		t.Fatalf("the token changed on an unrelated edit: %v", rec.WssToken)
+	}
+	if rec.WssPort == nil || *rec.WssPort != *port {
+		t.Fatalf("the port changed on an unrelated edit: %v", rec.WssPort)
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -170,7 +171,11 @@ func (s *systemdSimulator) runUnit(unit string, prefixes ...string) error {
 			if s.FailIPCommand != "" && strings.Contains(command, s.FailIPCommand) && !tolerant {
 				return fmt.Errorf("%s failed", command)
 			}
-			if err := s.interpret(strings.Fields(command)); err != nil && !tolerant {
+			argv, err := splitCommand(command)
+			if err != nil {
+				return fmt.Errorf("%s failed: %w", command, err)
+			}
+			if err := s.interpret(argv); err != nil && !tolerant {
 				return fmt.Errorf("%s failed: %w", command, err)
 			}
 		}
@@ -198,6 +203,12 @@ func (s *systemdSimulator) interpret(argv []string) error {
 	switch filepath.Base(argv[0]) {
 	case "modprobe", "ping":
 		return nil
+	case "gre-panel":
+		// The relay unit runs the panel binary itself. The simulator models
+		// the relay by creating the TUN it owns, with the MTU and addresses
+		// the relay configures, and bringing it up — which is exactly what
+		// the relay does when it starts.
+		return s.interpretRelay(ctx, argv)
 	case "ip":
 	default:
 		return fmt.Errorf("the simulator does not run %q", argv[0])
@@ -555,4 +566,151 @@ func (h *harness) setSetting(t *testing.T, key string, value any) {
 	if _, err := h.settings.Update(context.Background(), map[string]any{key: value}, nil); err != nil {
 		t.Fatalf("setting %s failed: %v", key, err)
 	}
+}
+
+// interpretRelay models `gre-panel relay ...` by creating the TUN the relay
+// owns, with the MTU and addresses it configures, and bringing it up. The
+// token, the listen/dial choice and the port are the relay's business, not
+// the kernel's, so they are parsed and ignored here — except that a missing
+// token is a relay that refuses to start, which the simulator models as a
+// failure.
+func (s *systemdSimulator) interpretRelay(ctx context.Context, argv []string) error {
+	if len(argv) < 2 || argv[1] != "relay" {
+		return fmt.Errorf("the simulator does not run %v", argv)
+	}
+	var spec link.TunnelSpec
+	spec.Kind = link.KindGREWSS
+	var addresses []link.Address
+	token := ""
+	for i := 2; i < len(argv); i++ {
+		switch argv[i] {
+		case "--tun":
+			i++
+			spec.Name = argv[i]
+		case "--key":
+			i++
+			n, err := strconv.ParseUint(argv[i], 10, 32)
+			if err != nil {
+				return err
+			}
+			key := uint32(n)
+			spec.OKey = &key
+		case "--in-key":
+			i++
+			n, err := strconv.ParseUint(argv[i], 10, 32)
+			if err != nil {
+				return err
+			}
+			key := uint32(n)
+			spec.IKey = &key
+		case "--token":
+			i++
+			token = argv[i]
+		case "--mtu":
+			i++
+			mtu, err := strconv.Atoi(argv[i])
+			if err != nil {
+				return err
+			}
+			spec.Mtu = mtu
+		case "--address":
+			i++
+			addr, err := parseRelayAddress(argv[i])
+			if err != nil {
+				return err
+			}
+			addresses = append(addresses, addr)
+		case "--listen", "--dial":
+			i++
+		}
+	}
+	if spec.Name == "" {
+		return fmt.Errorf("gre-panel relay without --tun")
+	}
+	if token == "" {
+		return fmt.Errorf("gre-panel relay without a token")
+	}
+	if err := s.links.Create(ctx, spec); err != nil {
+		return err
+	}
+	for _, addr := range addresses {
+		if err := s.links.AddAddress(ctx, spec.Name, addr); err != nil {
+			return err
+		}
+	}
+	return s.links.SetUp(ctx, spec.Name)
+}
+
+// parseRelayAddress parses one --address value: "10.10.1.1/30", or
+// "10.10.1.1 peer 10.10.1.2/32" for a single-address point-to-point link.
+// In the peer form the local address carries no prefix of its own; the
+// prefix comes from the peer's CIDR.
+func parseRelayAddress(s string) (link.Address, error) {
+	parts := strings.Fields(s)
+	if len(parts) == 0 {
+		return link.Address{}, fmt.Errorf("empty relay address")
+	}
+	if len(parts) == 3 && parts[1] == "peer" {
+		ip := net.ParseIP(parts[0])
+		if ip == nil {
+			return link.Address{}, fmt.Errorf("invalid relay address: %s", parts[0])
+		}
+		peerIP, peerIPNet, err := net.ParseCIDR(parts[2])
+		if err != nil {
+			return link.Address{}, err
+		}
+		peerOnes, _ := peerIPNet.Mask.Size()
+		return link.Address{Address: ip.String(), Peer: peerIP.String(), PrefixLength: peerOnes}, nil
+	}
+	ip, ipnet, err := net.ParseCIDR(parts[0])
+	if err != nil {
+		return link.Address{}, err
+	}
+	ones, _ := ipnet.Mask.Size()
+	return link.Address{Address: ip.String(), PrefixLength: ones}, nil
+}
+
+// splitCommand splits a unit file's command line the way systemd does: on
+// whitespace, except inside double quotes, where the quotes are removed and
+// the content is one argument. A backslash inside quotes escapes the next
+// character. This is what lets a --address value like "10.10.1.1 peer
+// 10.10.1.2/30" survive the round trip through the unit file.
+func splitCommand(s string) ([]string, error) {
+	var argv []string
+	var cur strings.Builder
+	inQuotes := false
+	escaped := false
+	for _, r := range s {
+		if escaped {
+			cur.WriteRune(r)
+			escaped = false
+			continue
+		}
+		switch r {
+		case '\\':
+			if inQuotes {
+				escaped = true
+			} else {
+				cur.WriteRune(r)
+			}
+		case '"':
+			inQuotes = !inQuotes
+		case ' ', '\t':
+			if inQuotes {
+				cur.WriteRune(r)
+			} else if cur.Len() > 0 {
+				argv = append(argv, cur.String())
+				cur.Reset()
+			}
+		default:
+			cur.WriteRune(r)
+		}
+	}
+	if inQuotes {
+		return nil, fmt.Errorf("unterminated quote in %q", s)
+	}
+	if cur.Len() > 0 {
+		argv = append(argv, cur.String())
+	}
+	return argv, nil
 }

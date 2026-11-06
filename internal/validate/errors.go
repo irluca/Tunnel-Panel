@@ -35,6 +35,8 @@ const (
 	CodeInvalidKey         = "INVALID_GRE_KEY"
 	CodeInvalidEspKey      = "INVALID_ESP_KEY"
 	CodeInvalidEspField    = "INVALID_FIELD_FOR_TUNNEL_TYPE"
+	CodeInvalidWssToken    = "INVALID_WSS_TOKEN"
+	CodeInvalidWssPort     = "INVALID_WSS_PORT"
 	CodeInvalidFwMark      = "INVALID_FWMARK"
 	CodeInvalidNumber      = "INVALID_TUNNEL_NUMBER"
 	CodeInvalidQueueLength = "INVALID_QUEUE_LENGTH"

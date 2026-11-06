@@ -221,6 +221,23 @@ func SpecOf(rec Record) link.TunnelSpec {
 		}
 		spec.EspIfID = link.EspIfID(rec.LocalEndpoint, rec.RemoteEndpoint, rec.InterfaceName)
 	}
+	if rec.TunnelTypeID == model.TunnelTypeGREWSS {
+		// Side A listens, side B dials: the rule is fixed so the two ends
+		// agree without another field to keep in sync.
+		if rec.TunnelSideID == model.TunnelSideB {
+			spec.WssMode = link.WssModeDial
+		} else {
+			spec.WssMode = link.WssModeListen
+		}
+		if rec.WssToken != nil {
+			spec.WssToken = *rec.WssToken
+		}
+		if rec.WssPort != nil {
+			spec.WssPort = int(*rec.WssPort)
+		} else {
+			spec.WssPort = link.WssDefaultPort
+		}
+	}
 	return spec
 }
 
@@ -300,6 +317,8 @@ func recordFromInput(in validate.TunnelInput) model.Tunnel {
 		IKey:              in.IKey,
 		OKey:              in.OKey,
 		EspKey:            in.EspKey,
+		WssToken:          in.WssToken,
+		WssPort:           in.WssPort,
 
 		HasInputChecksum:  in.HasInputChecksum,
 		HasOutputChecksum: in.HasOutputChecksum,
@@ -432,7 +451,9 @@ func (p *planner) PlanCreate(ctx context.Context, rec Record, keepalive Keepaliv
 // only by root; zero means the store's default, which is what every other
 // unit uses — and what keeps their plans byte-identical to before.
 func unitFileMode(kind string) os.FileMode {
-	if kind == link.KindESP {
+	// The ESP unit's ExecStart lines carry the key, and the GRE-over-WSS
+	// unit's carry the token: both are written readable only by root.
+	if kind == link.KindESP || kind == link.KindGREWSS {
 		return persist.SecretFileMode
 	}
 	return 0

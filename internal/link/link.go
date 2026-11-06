@@ -32,6 +32,10 @@ const (
 	// KindESP is the panel's name for an ESP tunnel. The kernel interface it
 	// creates is of kind "xfrm"; see EspIfID and the Create path.
 	KindESP = "esp"
+	// KindGREWSS is the panel's name for a GRE-over-WSS tunnel. The
+	// interface is a TUN the relay creates, not a kernel GRE interface; see
+	// internal/grewss and the relay unit.
+	KindGREWSS = "gre-wss"
 )
 
 // Manager implementation names, reported through /system/capabilities.
@@ -54,13 +58,13 @@ var (
 
 // TunnelKinds lists every tunnel kind the panel understands, in a stable order.
 func TunnelKinds() []string {
-	return []string{KindGRE, KindGRETAP, KindIP6GRE, KindIP6GRETAP, KindESP}
+	return []string{KindGRE, KindGRETAP, KindIP6GRE, KindIP6GRETAP, KindESP, KindGREWSS}
 }
 
 // IsTunnelKind reports whether a kind names a tunnel this panel manages.
 func IsTunnelKind(kind string) bool {
 	switch kind {
-	case KindGRE, KindGRETAP, KindIP6GRE, KindIP6GRETAP, KindESP:
+	case KindGRE, KindGRETAP, KindIP6GRE, KindIP6GRETAP, KindESP, KindGREWSS:
 		return true
 	}
 	return false
@@ -319,6 +323,16 @@ type TunnelSpec struct {
 	EspSPIOut uint32
 	EspSPIIn  uint32
 	EspIfID   uint32
+
+	// GRE-over-WSS tunnels only. WssToken is the shared token that
+	// authenticates the far end; WssPort is the TCP port the listening side
+	// serves on and the dialling side connects to; WssMode is "listen" on
+	// the side that serves and "dial" on the side that connects. The token
+	// is a credential and is never serialised, for the same reason as the
+	// ESP key above.
+	WssToken string `json:"-"`
+	WssPort  int
+	WssMode  string
 }
 
 // Route is one entry of the kernel routing table. The panel reads routes to

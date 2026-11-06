@@ -115,6 +115,12 @@ type tunnelPatch struct {
 	// EspKey is the pre-shared ESP key. Setting it rotates the key; the
 	// value is never returned by the API.
 	EspKey *string `json:"esp_key,omitempty"`
+	// WssToken is the shared WSS token. Setting it rotates the token; the
+	// value is never returned by the API.
+	WssToken *string `json:"wss_token,omitempty"`
+	// WssPort is the TCP port the tunnel serves on (side A) and dials
+	// (side B).
+	WssPort nullableInt `json:"wss_port,omitempty"`
 
 	HasInputChecksum  *bool `json:"has_input_checksum,omitempty"`
 	HasOutputChecksum *bool `json:"has_output_checksum,omitempty"`
@@ -201,6 +207,10 @@ func (p tunnelPatch) applyTo(in *validate.TunnelInput) {
 	if p.EspKey != nil {
 		in.EspKey = p.EspKey
 	}
+	if p.WssToken != nil {
+		in.WssToken = p.WssToken
+	}
+	setNullable(&in.WssPort, p.WssPort)
 
 	setBool(&in.HasInputChecksum, p.HasInputChecksum)
 	setBool(&in.HasOutputChecksum, p.HasOutputChecksum)

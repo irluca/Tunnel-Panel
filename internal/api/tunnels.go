@@ -395,6 +395,9 @@ func tunnelInputOf(rec tunnel.Record) validate.TunnelInput {
 		// mention the key would rewrite it to NULL, and the tunnel would lose
 		// the secret its peer still holds.
 		EspKey: rec.EspKey,
+		// The same, for the WSS token and port.
+		WssToken: rec.WssToken,
+		WssPort:  rec.WssPort,
 
 		HasInputChecksum:  rec.HasInputChecksum,
 		HasOutputChecksum: rec.HasOutputChecksum,
@@ -491,6 +494,8 @@ func (s *Server) pairingPayloadFor(ctx context.Context, rec tunnel.Record) (pair
 		IKey:            rec.IKey,
 		OKey:            rec.OKey,
 		EspKey:          rec.EspKey,
+		WssToken:        rec.WssToken,
+		WssPort:         rec.WssPort,
 
 		HasInputChecksum:  rec.HasInputChecksum,
 		HasOutputChecksum: rec.HasOutputChecksum,

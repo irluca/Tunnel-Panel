@@ -243,7 +243,7 @@ var tunnelTypeKinds = map[int64]string{
 	TunnelTypeIP6GRE:    "ip6gre",
 	TunnelTypeIP6GRETAP: "ip6gretap",
 	TunnelTypeESP:       "esp",
-	TunnelTypeGREWSS:   "gre-wss",
+	TunnelTypeGREWSS:    "gre-wss",
 }
 
 // TunnelTypeKind returns the kernel's name for a tunnel type, or "" when the

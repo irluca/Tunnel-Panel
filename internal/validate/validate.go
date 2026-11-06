@@ -90,6 +90,7 @@ func validateStatic(ctx context.Context, in TunnelInput, partial bool) *Errors {
 	validateEndpoints(ctx, in, errs, partial)
 	validateNumbers(ctx, in, errs, partial)
 	validateEsp(ctx, in, errs, partial)
+	validateGreWss(ctx, in, errs, partial)
 	validateAddressSyntax(ctx, in, errs)
 
 	return errs
@@ -172,6 +173,56 @@ func validateEsp(ctx context.Context, in TunnelInput, errs *Errors, partial bool
 		if in.PersistenceTypeID == model.PersistenceTypeNetworkd {
 			errs.Add("persistence_type_id", CodeInvalidPersistence,
 				i18n.T(ctx, "An ESP tunnel needs systemd persistence: only the systemd unit re-establishes the IPsec security associations after a reboot."), nil)
+		}
+	}
+}
+
+// validateGreWss applies the rules only a GRE-over-WSS tunnel has. The
+// relay is a long-running process, so only the systemd unit — which runs it
+// and restarts it — brings the tunnel back after a reboot; networkd can
+// recreate an interface but cannot run a daemon, and a runtime tunnel does
+// not claim to survive one at all. The GRE header the relay writes carries
+// a key and nothing else, so the checksum, sequence, path-MTU, ignore-df
+// and firewall-mark options have no meaning on it, and the IPv6 GRE fields
+// do not apply to an IPv4 underlay.
+func validateGreWss(ctx context.Context, in TunnelInput, errs *Errors, partial bool) {
+	if in.TunnelTypeID != model.TunnelTypeGREWSS {
+		return
+	}
+	if in.WssToken != nil {
+		if err := link.ParseWssToken(*in.WssToken); err != nil {
+			errs.Add("wss_token", CodeInvalidWssToken,
+				i18n.T(ctx, "A WSS token must be 32 hexadecimal characters."), nil)
+		}
+	}
+	if in.WssPort != nil && (*in.WssPort < 1 || *in.WssPort > 65535) {
+		errs.Add("wss_port", CodeInvalidWssPort,
+			i18n.T(ctx, "A WSS port is between 1 and 65535."), nil)
+	}
+	if in.HasInputChecksum || in.HasOutputChecksum || in.HasInputSequence || in.HasOutputSequence {
+		errs.Add("has_input_checksum", CodeInvalidEspField,
+			i18n.T(ctx, "Checksum and sequence options belong to GRE and have no meaning on a GRE-over-WSS tunnel."), nil)
+	}
+	if in.HopLimit != nil || in.EncapLimit != nil || in.TrafficClass != "" || in.FlowLabel != "" {
+		errs.Add("hop_limit", CodeInvalidEspField,
+			i18n.T(ctx, "Hop limit, encapsulation limit, traffic class and flow label belong to the IPv6 GRE types."), nil)
+	}
+	if in.IsPathMtuDiscovery {
+		errs.Add("is_path_mtu_discovery", CodeInvalidEspField,
+			i18n.T(ctx, "Path-MTU discovery belongs to GRE and has no meaning on a GRE-over-WSS tunnel."), nil)
+	}
+	if in.IsIgnoreDf {
+		errs.Add("is_ignore_df", CodeInvalidEspField,
+			i18n.T(ctx, "Ignore-df belongs to GRE and has no meaning on a GRE-over-WSS tunnel."), nil)
+	}
+	if in.FwMark != nil {
+		errs.Add("fwmark", CodeInvalidEspField,
+			i18n.T(ctx, "A GRE-over-WSS tunnel does not carry a firewall mark."), nil)
+	}
+	if !partial || in.PersistenceTypeID != 0 {
+		if in.PersistenceTypeID != model.PersistenceTypeSystemd {
+			errs.Add("persistence_type_id", CodeInvalidPersistence,
+				i18n.T(ctx, "A GRE-over-WSS tunnel needs systemd persistence: only the systemd unit runs the relay that carries it, and restarts it after a reboot."), nil)
 		}
 	}
 }

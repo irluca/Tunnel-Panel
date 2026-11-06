@@ -99,6 +99,10 @@ type Tunnel struct {
 	// it. It is generated on creation when the operator does not give one.
 	WssToken *string `json:"-"`
 
+	// WssPort is the TCP port a GRE-over-WSS tunnel serves on (side A) and
+	// dials (side B). NULL means the default, 443.
+	WssPort *int64 `json:"wss_port,omitempty"`
+
 	HasInputChecksum   bool `json:"has_input_checksum"`
 	HasOutputChecksum  bool `json:"has_output_checksum"`
 	HasInputSequence   bool `json:"has_input_sequence"`

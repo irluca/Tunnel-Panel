@@ -221,7 +221,10 @@ func mismatchClause(ctx context.Context, param int, actual, expected string) str
 // parameterChecks compares each requested attribute against the live one.
 func parameterChecks(ctx context.Context, desired link.TunnelSpec, observed link.Link) []VerifyCheck {
 	actual := observed.Tunnel
-	if actual == nil {
+	// A TUN interface has no tunnel attributes in the kernel: the endpoints,
+	// keys and token live in the relay. For a GRE-over-WSS tunnel that is
+	// expected, and only the MTU is compared below.
+	if actual == nil && desired.Kind != link.KindGREWSS {
 		return []VerifyCheck{{
 			Name: CheckParameters, Fatal: true,
 			Detail:   i18n.T(ctx, "the interface exists but reports no tunnel attributes at all"),
@@ -229,10 +232,6 @@ func parameterChecks(ctx context.Context, desired link.TunnelSpec, observed link
 		}}
 	}
 
-	type comparison struct {
-		param            int
-		expected, actual string
-	}
 	// An IPv6 tunnel carries a hop limit rather than a TTL, and it is the same
 	// octet. link.TunnelArgs writes the hop limit when one is set and falls back
 	// to the TTL, and the reader maps the kernel's hoplimit back onto Ttl — so
@@ -249,7 +248,22 @@ func parameterChecks(ctx context.Context, desired link.TunnelSpec, observed link
 		}
 	}
 
-	comparisons := []comparison{
+	// An xfrm interface carries no endpoints, TTL or keys: those live in
+	// the security associations, which have their own check. Only the MTU
+	// is compared here. A TUN interface carries no tunnel attributes at
+	// all: the endpoints, keys and token live in the relay, not in the
+	// kernel. Only the MTU is compared here too; the addresses have their
+	// own check below. These two kinds are handled before the full list is
+	// built, because building it reads the tunnel attributes — which a TUN
+	// does not have.
+	if desired.Kind == link.KindESP || desired.Kind == link.KindGREWSS {
+		comparisons := []paramComparison{
+			{paramMtu, itoa(int64(desired.Mtu)), itoa(int64(observed.MTU))},
+		}
+		return parameterVerdict(ctx, desired, observed, comparisons)
+	}
+
+	comparisons := []paramComparison{
 		{paramLocal, desired.Local, actual.Local},
 		{paramRemote, desired.Remote, actual.Remote},
 		{ttlParam, itoa(int64(expectedTtl)), itoa(int64(actual.Ttl))},
@@ -257,14 +271,19 @@ func parameterChecks(ctx context.Context, desired link.TunnelSpec, observed link
 		{paramIKey, keyText(desired.IKey), keyText(actual.IKey)},
 		{paramOKey, keyText(desired.OKey), keyText(actual.OKey)},
 	}
-	// An xfrm interface carries no endpoints, TTL or keys: those live in
-	// the security associations, which have their own check. Only the MTU
-	// is compared here.
-	if desired.Kind == link.KindESP {
-		comparisons = []comparison{
-			{paramMtu, itoa(int64(desired.Mtu)), itoa(int64(observed.MTU))},
-		}
-	}
+	return parameterVerdict(ctx, desired, observed, comparisons)
+}
+
+// paramComparison is one parameter compared between the desired tunnel and
+// the interface the kernel reports.
+type paramComparison struct {
+	param            int
+	expected, actual string
+}
+
+// parameterVerdict turns a list of parameter comparisons into the check the
+// caller reports: either every parameter matches, or the mismatches, named.
+func parameterVerdict(ctx context.Context, desired link.TunnelSpec, observed link.Link, comparisons []paramComparison) []VerifyCheck {
 
 	var mismatches []string
 	for _, c := range comparisons {

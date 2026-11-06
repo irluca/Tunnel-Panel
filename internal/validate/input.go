@@ -51,6 +51,10 @@ type TunnelInput struct {
 	// the value is a credential and is never returned by the API.
 	WssToken *string `json:"wss_token,omitempty"`
 
+	// WssPort is the TCP port a GRE-over-WSS tunnel serves on (side A) and
+	// dials (side B). Empty means the default, 443.
+	WssPort *int64 `json:"wss_port,omitempty"`
+
 	HasInputChecksum  bool `json:"has_input_checksum"`
 	HasOutputChecksum bool `json:"has_output_checksum"`
 	HasInputSequence  bool `json:"has_input_sequence"`

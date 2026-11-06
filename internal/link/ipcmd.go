@@ -642,6 +642,11 @@ func normaliseKind(d ipLink) string {
 		if d.LinkInfo.InfoKind == "xfrm" {
 			return KindESP
 		}
+		if d.LinkInfo.InfoKind == "tun" {
+			// A TUN interface is the relay's end of a GRE-over-WSS
+			// tunnel; the kernel has no gre-wss type of its own.
+			return KindGREWSS
+		}
 		return d.LinkInfo.InfoKind
 	}
 	switch d.LinkType {

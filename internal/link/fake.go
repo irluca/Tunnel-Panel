@@ -275,6 +275,13 @@ func (f *Fake) Create(ctx context.Context, spec TunnelSpec) error {
 		esp.PoliciesPresent = len(esp.SPIs) == 2
 		l.Tunnel.Esp = esp
 	}
+	if spec.Kind == KindGREWSS {
+		// A TUN interface reports no tunnel attributes in the kernel: the
+		// endpoints, keys and token live in the relay. The fake models that
+		// by leaving the tunnel attributes unset, so a verify that reads
+		// them proves the GRE-WSS branch handles their absence.
+		l.Tunnel = nil
+	}
 	f.links[spec.Name] = l
 	f.publish(Event{Kind: EventAdded, Link: *l})
 	return nil
