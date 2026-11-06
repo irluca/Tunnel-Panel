@@ -417,7 +417,7 @@ func run() error {
 		Log: log,
 	})
 	diagService := diag.New(diag.Deps{
-		DB: database, Repo: repo, Links: links, Runner: runner, Settings: store, Log: log,
+		DB: database, Repo: repo, Links: links, Verify: tunnelService, Runner: runner, Settings: store, Log: log,
 		Dialer:      probeDialer,
 		PanelPort:   cfg.BindPort,
 		TcpdumpBin:  lookupBinary("tcpdump", "/usr/bin/tcpdump"),

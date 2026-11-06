@@ -69,15 +69,28 @@ func TypeName(id int64) string {
 		return "traceroute"
 	case model.DiagnosticTypeAnalyze:
 		return "analyze"
+	case model.DiagnosticTypePathTest:
+		return "path-test"
 	}
 	return "unknown"
 }
 
 // Deps is what the service needs.
+// Verifier is the tunnel service's kernel-versus-database check, which the
+// diagnosis uses as one of its voters. It is an interface so the diagnosis
+// can be tested without the whole tunnel service.
+type Verifier interface {
+	Verify(ctx context.Context, rec tunnel.Record) tunnel.VerifyReport
+}
+
 type Deps struct {
-	DB       *db.DB
-	Repo     *tunnel.Repo
-	Links    link.LinkManager
+	DB    *db.DB
+	Repo  *tunnel.Repo
+	Links link.LinkManager
+	// Verify is the kernel-versus-database check. Nil means the diagnosis
+	// runs without that voter (the panel wires it in; tests may leave it
+	// out).
+	Verify   Verifier
 	Dialer   monitor.Dialer
 	Runner   exec.Runner
 	Settings Settings
@@ -98,6 +111,7 @@ type Service struct {
 	db       *db.DB
 	repo     *tunnel.Repo
 	links    link.LinkManager
+	verify   Verifier
 	dialer   monitor.Dialer
 	runner   exec.Runner
 	settings Settings
@@ -124,7 +138,7 @@ func New(d Deps) *Service {
 		dialer = monitor.SystemDialer{}
 	}
 	return &Service{
-		db: d.DB, repo: d.Repo, links: d.Links, dialer: dialer, runner: d.Runner,
+		db: d.DB, repo: d.Repo, links: d.Links, verify: d.Verify, dialer: dialer, runner: d.Runner,
 		settings: d.Settings, log: log,
 		tcpdumpBin: d.TcpdumpBin, nftBin: d.NftBin, iptablesBin: d.IptablesBin,
 		panelPortNumber: d.PanelPort,

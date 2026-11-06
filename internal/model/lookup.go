@@ -74,6 +74,7 @@ const (
 	DiagnosticTypeMtuProbe   int64 = 20
 	DiagnosticTypeTraceroute int64 = 30
 	DiagnosticTypeAnalyze    int64 = 40
+	DiagnosticTypePathTest   int64 = 50
 )
 
 // AddressFamily identifiers.
@@ -411,6 +412,7 @@ func LookupTables() []LookupTable {
 			{DiagnosticTypeMtuProbe, "MtuProbe"},
 			{DiagnosticTypeTraceroute, "Traceroute"},
 			{DiagnosticTypeAnalyze, "Analyze"},
+			{DiagnosticTypePathTest, "PathTest"},
 		}},
 		{Name: "AddressFamily", Values: []LookupValue{
 			{AddressFamilyIPv4, "IPv4"},

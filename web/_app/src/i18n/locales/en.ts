@@ -707,6 +707,20 @@ export default {
 
   diagnostics: {
     title: 'Diagnostics',
+    pathTest: {
+      title: 'Path test',
+      run: 'Test the path',
+      running: 'Testing…',
+      never: 'Run a path test to measure latency, loss, the largest packet that fits and the hops, in one go.',
+      latency: 'Average round trip',
+      largestPacket: 'Largest packet that fits',
+      hops: 'Hops',
+      reached: 'The far end answered',
+      notReached: 'The far end did not answer',
+      bytesValue: '{{value}} bytes',
+      received: '{{received}} of {{sent}} answered, {{loss}}% loss',
+      recommendedMtu: 'Recommended tunnel MTU: {{value}}',
+    },
     analyze: {
       title: 'Analyse',
       run: 'Analyse this tunnel',
@@ -715,6 +729,8 @@ export default {
       confidence: 'Confidence',
       evidence: 'Evidence collected',
       suggestedFix: 'What to try',
+      votes: 'How the verdict was reached',
+      voteWeight: 'weight',
       never: 'Run an analysis to see why this tunnel is in its current state.',
       // Exactly the verdicts internal/diag can reach, and only those. This
       // block previously named seven the analyser never produces — MTU_MISMATCH,
@@ -731,6 +747,7 @@ export default {
         KEY_OR_ADDRESSING_MISMATCH: 'The keys or the addresses do not match',
         MTU_PROBLEM: 'Large packets are not getting through',
         LOCAL_FIREWALL_BLOCK: 'A firewall on this server is blocking GRE',
+        CONFIG_MISMATCH: 'The live state does not match the stored record',
       },
       // What each piece of evidence looked at, by the analyser's own name for
       // it (internal/diag/analyze.go).
@@ -743,6 +760,7 @@ export default {
         firewall: 'Firewall',
         capture: 'Packet capture',
         packet_size: 'Packet size',
+        kernel_vs_database: 'Live state vs stored record',
       },
     },
     ping: {

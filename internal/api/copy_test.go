@@ -288,7 +288,7 @@ func TestEveryBackendValueTheInterfaceRendersHasATranslation(t *testing.T) {
 		expectation{path: []string{"diagnostics", "analyze", "verdicts"}, values: []string{
 			diag.VerdictInterfaceMissing, diag.VerdictInterfaceDown, diag.VerdictUnderlayUnreachable,
 			diag.VerdictNoReturnTraffic, diag.VerdictKeyOrAddressing, diag.VerdictMtuProblem,
-			diag.VerdictLocalFirewall, diag.VerdictHealthy,
+			diag.VerdictLocalFirewall, diag.VerdictConfigMismatch, diag.VerdictHealthy,
 		}, why: "the tunnel analyze verdict"},
 		expectation{path: []string{"diagnostics", "analyze", "confidenceLevel"},
 			values: []string{diag.ConfidenceHigh, diag.ConfidenceLow},

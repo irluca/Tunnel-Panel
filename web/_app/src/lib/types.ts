@@ -844,12 +844,28 @@ export interface Evidence {
   data?: unknown
 }
 
+export interface AnalyzeVote {
+  signal: string
+  cause: string
+  weight: number
+  detail: string
+}
+
 export interface AnalyzeResult {
   verdict: string
   confidence: string
   summary: string
   suggested_fix?: string[]
+  votes?: AnalyzeVote[]
   evidence: Evidence[]
+  checked_at: string
+}
+
+export interface PathTestResult {
+  ping?: PingSummary
+  mtu?: MtuResult
+  traceroute?: TracerouteResult
+  summary: string
   checked_at: string
 }
 

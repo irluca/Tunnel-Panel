@@ -801,3 +801,94 @@ func indexOf(haystack, needle string) int {
 	}
 	return -1
 }
+
+// fakeVerifier is a Verifier that always reports the record it is given.
+type fakeVerifier struct {
+	report tunnel.VerifyReport
+}
+
+func (f fakeVerifier) Verify(ctx context.Context, rec tunnel.Record) tunnel.VerifyReport {
+	return f.report
+}
+
+// A live interface that does not match the stored record is a configuration
+// mismatch, not a broken tunnel: the diagnosis must name it explicitly, and
+// the votes must show the kernel-versus-database voter casting it.
+func TestAnalyzeNamesAKernelVersusDatabaseMismatch(t *testing.T) {
+	h := newHarness(t, alwaysAnswer)
+	ctx := context.Background()
+	h.service.verify = fakeVerifier{report: tunnel.VerifyReport{
+		Ok: false,
+		Failures: []string{
+			"the interface exists but the MTU is 1400, while the record says 1472",
+		},
+	}}
+
+	_, result, err := h.service.Analyze(ctx, h.tunnelID, AnalyzeParams{SampleSeconds: 0.05})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Verdict != VerdictConfigMismatch {
+		t.Fatalf("verdict = %q, want %q (votes %+v)", result.Verdict, VerdictConfigMismatch, result.Votes)
+	}
+	var voted bool
+	for _, v := range result.Votes {
+		if v.Signal == "kernel_vs_database" && v.Cause == VerdictConfigMismatch {
+			voted = true
+		}
+	}
+	if !voted {
+		t.Fatalf("no vote from the kernel-versus-database voter: %+v", result.Votes)
+	}
+	if len(result.SuggestedFix) == 0 {
+		t.Fatal("the mismatch verdict must suggest what to do about it")
+	}
+}
+
+// The verdict is the cause with the highest total weight: a firewall block
+// (weight 8) outvotes a traffic-shape signal (weight 5), so the diagnosis
+// names the cause rather than the symptom it produces.
+func TestWinningVerdictPicksTheHeaviestCause(t *testing.T) {
+	votes := []Vote{
+		{Signal: "counters", Cause: VerdictNoReturnTraffic, Weight: 5},
+		{Signal: "firewall", Cause: VerdictLocalFirewall, Weight: 8},
+	}
+	if got := winningVerdict(votes); got != VerdictLocalFirewall {
+		t.Fatalf("winner = %q, want %q", got, VerdictLocalFirewall)
+	}
+	// A tie breaks by priority: the more specific and local cause wins.
+	tied := []Vote{
+		{Signal: "counters", Cause: VerdictNoReturnTraffic, Weight: 5},
+		{Signal: "counters", Cause: VerdictKeyOrAddressing, Weight: 5},
+	}
+	if got := winningVerdict(tied); got != VerdictNoReturnTraffic {
+		t.Fatalf("tie winner = %q, want %q", got, VerdictNoReturnTraffic)
+	}
+}
+
+// A path test measures latency, loss, the largest packet that fits and the
+// hops in one go, and says the answer in one sentence.
+func TestPathTestMeasuresThePathInOneGo(t *testing.T) {
+	h := newHarness(t, alwaysAnswer)
+	ctx := context.Background()
+
+	_, result, err := h.service.PathTest(ctx, h.tunnelID, PathTestParams{Count: 3})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Ping == nil {
+		t.Fatal("the path test has no ping measurement")
+	}
+	if result.Ping.Received == 0 {
+		t.Fatalf("the path test lost every probe: %+v", result.Ping)
+	}
+	if result.Mtu == nil {
+		t.Fatal("the path test has no MTU measurement")
+	}
+	if result.Traceroute == nil {
+		t.Fatal("the path test has no traceroute")
+	}
+	if result.Summary == "" {
+		t.Fatal("the path test must say its answer in one sentence")
+	}
+}

@@ -161,8 +161,8 @@ func (s *Server) handleDiagTraceroute(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"run": run, "result": result})
 }
 
-// handleDiagAnalyze runs the decision tree and returns a specific verdict with
-// its evidence (§13.4).
+// handleDiagAnalyze runs the vote-based diagnosis and returns the winning
+// verdict with its votes and evidence (§13.4).
 func (s *Server) handleDiagAnalyze(w http.ResponseWriter, r *http.Request) {
 	rec, ok := s.tunnelFromPath(w, r)
 	if !ok {
@@ -176,6 +176,28 @@ func (s *Server) handleDiagAnalyze(w http.ResponseWriter, r *http.Request) {
 	}
 
 	run, result, err := s.diag.Analyze(r.Context(), rec.TunnelID, params)
+	if err != nil {
+		s.writeDomainError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"run": run, "result": result})
+}
+
+// handleDiagPathTest measures the path in one go: latency and loss through
+// the tunnel, the largest packet that fits, and the hops to the far end.
+func (s *Server) handleDiagPathTest(w http.ResponseWriter, r *http.Request) {
+	rec, ok := s.tunnelFromPath(w, r)
+	if !ok {
+		return
+	}
+	var params diag.PathTestParams
+	if r.ContentLength > 0 {
+		if !decodeJSON(w, r, &params) {
+			return
+		}
+	}
+
+	run, result, err := s.diag.PathTest(r.Context(), rec.TunnelID, params)
 	if err != nil {
 		s.writeDomainError(w, r, err)
 		return

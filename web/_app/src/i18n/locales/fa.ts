@@ -703,6 +703,20 @@ export default {
 
   diagnostics: {
     title: 'عیب‌یابی',
+    pathTest: {
+      title: 'تست مسیر',
+      run: 'تست مسیر',
+      running: 'در حال تست…',
+      never: 'برای اندازه‌گیری تأخیر، افت، بزرگ‌ترین بسته‌ای که جا می‌شود و تعداد هاپ‌ها در یک تست، تست مسیر را اجرا کنید.',
+      latency: 'میانگین رفت‌وبرگشت',
+      largestPacket: 'بزرگ‌ترین بسته‌ای که جا می‌شود',
+      hops: 'هاپ‌ها',
+      reached: 'سر دیگر پاسخ داد',
+      notReached: 'سر دیگر پاسخ نداد',
+      bytesValue: '{{value}} بایت',
+      received: '{{received}} از {{sent}} پاسخ گرفت، {{loss}}٪ افت',
+      recommendedMtu: 'MTU پیشنهادی تونل: {{value}}',
+    },
     analyze: {
       title: 'تحلیل',
       run: 'تحلیل این تونل',
@@ -711,6 +725,8 @@ export default {
       confidence: 'اطمینان',
       evidence: 'شواهد جمع‌آوری‌شده',
       suggestedFix: 'چه کاری را امتحان کنید',
+      votes: 'نتیجه چطور به دست آمد',
+      voteWeight: 'وزن',
       never: 'برای دیدن دلیل وضعیت کنونی این تونل یک تحلیل اجرا کنید.',
       confidenceLevel: { high: 'زیاد', low: 'کم' },
       verdicts: {
@@ -722,6 +738,7 @@ export default {
         KEY_OR_ADDRESSING_MISMATCH: 'کلیدها یا نشانی‌ها یکی نیستند',
         MTU_PROBLEM: 'بسته‌های بزرگ رد نمی‌شوند',
         LOCAL_FIREWALL_BLOCK: 'دیواره آتش همین سرور GRE را می‌بندد',
+        CONFIG_MISMATCH: 'وضعیت زنده با سابقهٔ ذخیره‌شده نمی‌خواند',
       },
       evidenceName: {
         interface: 'رابط',
@@ -732,6 +749,7 @@ export default {
         firewall: 'دیواره آتش',
         capture: 'ضبط بسته‌ها',
         packet_size: 'اندازه بسته',
+        kernel_vs_database: 'وضعیت زنده در برابر سابقهٔ ذخیره‌شده',
       },
     },
     ping: {

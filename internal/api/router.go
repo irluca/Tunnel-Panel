@@ -406,6 +406,7 @@ func (s *Server) buildRouter() http.Handler {
 						r.Post("/tunnels/{id}/diagnostics/tcp", s.handleDiagTcpCheck)
 						r.Post("/tunnels/{id}/diagnostics/traceroute", s.handleDiagTraceroute)
 						r.Post("/tunnels/{id}/diagnostics/analyze", s.handleDiagAnalyze)
+					r.Post("/tunnels/{id}/diagnostics/path-test", s.handleDiagPathTest)
 						r.Get("/tunnels/{id}/counters", s.handleTunnelCounters)
 						r.Get("/diagnostics/runs", s.handleDiagRuns)
 						r.Get("/diagnostics/runs/{id}", s.handleDiagRun)

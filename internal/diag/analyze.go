@@ -22,7 +22,13 @@ const (
 	VerdictKeyOrAddressing     = "KEY_OR_ADDRESSING_MISMATCH"
 	VerdictMtuProblem          = "MTU_PROBLEM"
 	VerdictLocalFirewall       = "LOCAL_FIREWALL_BLOCK"
-	VerdictHealthy             = "HEALTHY"
+	// VerdictConfigMismatch means the kernel's live state disagrees with the
+	// database record: the interface the panel thinks it manages is not the
+	// interface the kernel has. This is the vote the verification casts, and
+	// it is the one the Rahyaab stale-rule incidents taught us to name
+	// explicitly rather than letting it hide behind "the tunnel is down".
+	VerdictConfigMismatch = "CONFIG_MISMATCH"
+	VerdictHealthy        = "HEALTHY"
 )
 
 // Confidence qualifies a verdict.
@@ -54,9 +60,25 @@ type AnalyzeResult struct {
 	Confidence string `json:"confidence"`
 	Summary    string `json:"summary"`
 	// SuggestedFix is what to do about it, in the order worth trying.
-	SuggestedFix []string   `json:"suggested_fix,omitempty"`
-	Evidence     []Evidence `json:"evidence"`
-	CheckedAt    string     `json:"checked_at"`
+	SuggestedFix []string `json:"suggested_fix,omitempty"`
+	// Votes is how the verdict was reached: every signal that cast a vote,
+	// the cause it voted for, and its weight. A bare verdict told an
+	// operator nothing about why the panel thinks what it thinks; the votes
+	// are the reasoning, and they are what makes a wrong verdict checkable
+	// rather than merely disagreeable.
+	Votes     []Vote     `json:"votes,omitempty"`
+	Evidence  []Evidence `json:"evidence"`
+	CheckedAt string     `json:"checked_at"`
+}
+
+// Vote is one signal's say in the verdict: the cause it votes for, why, and
+// how much its say counts. The verdict is the cause with the highest total
+// weight; ties break by the priority order in verdictPriority.
+type Vote struct {
+	Signal string `json:"signal"`
+	Cause  string `json:"cause"`
+	Weight int    `json:"weight"`
+	Detail string `json:"detail"`
 }
 
 func (r *AnalyzeResult) add(name, detail string, data any) {
@@ -198,104 +220,205 @@ func (s *Service) analyze(ctx context.Context, rec tunnel.Record, params Analyze
 		result.Evidence = append(result.Evidence, *capture)
 	}
 
-	// The tunnel works.
-	if tunnelReachable && tunnelLoss == 0 {
+	// The verdict is a vote, not the first failure. Each signal that measured
+	// something casts a vote for the cause it points at, with a weight for how
+	// much its say counts, and the cause with the highest total weight wins.
+	// A decision tree stops at the first failure and never learns that a
+	// second signal disagrees; a vote shows the disagreement, and the votes
+	// are returned so the operator can see the reasoning and check it.
+	// The kernel-versus-database check votes too: a live interface that does
+	// not match the stored record is a configuration mismatch, not a broken
+	// tunnel, and naming it explicitly is what stops the next stale-rule
+	// incident from being misread as a path failure.
+	var votes []Vote
+	vote := func(signal, cause string, weight int, detail string) {
+		votes = append(votes, Vote{Signal: signal, Cause: cause, Weight: weight, Detail: detail})
+	}
+
+	// The verification voter: the kernel's live state against the database.
+	mismatch := ""
+	if s.verify != nil {
+		report := s.verify.Verify(ctx, rec)
+		if !report.Ok {
+			failures := report.Failures
+			mismatch = strings.Join(failures, "; ")
+			result.add("kernel_vs_database", i18n.T(ctx,
+				"the live state does not match the stored record: %s", mismatch),
+				map[string]any{"failures": failures})
+		} else {
+			result.add("kernel_vs_database", i18n.T(ctx,
+				"the live state matches the stored record"), nil)
+		}
+	}
+	if mismatch != "" {
+		vote("kernel_vs_database", VerdictConfigMismatch, 6, mismatch)
+	}
+
+	// A local rule that blocks protocol 47 explains everything above it, so
+	// it votes heavily.
+	firewallBlocks := false
+	if firewall != nil && firewall.Data != nil {
+		if blocked, ok := firewall.Data.(map[string]any)["blocks_gre"].(bool); ok && blocked {
+			firewallBlocks = true
+			vote("firewall", VerdictLocalFirewall, 8,
+				i18n.T(ctx, "A firewall rule on this host affects protocol 47, which is what GRE uses."))
+		}
+	}
+
+	// The tunnel works and the record matches: nothing votes against it.
+	if tunnelReachable && tunnelLoss == 0 && mismatch == "" && !firewallBlocks {
 		result.Verdict = VerdictHealthy
 		result.Summary = i18n.T(ctx, "%s is up and carrying traffic: every probe through it was answered.", name)
 		return result
 	}
 
-	// 7. A local rule that blocks protocol 47 explains everything above it, so
-	// it is checked before the traffic-shape verdicts.
-	if firewall != nil && firewall.Data != nil {
-		if blocked, ok := firewall.Data.(map[string]any)["blocks_gre"].(bool); ok && blocked {
-			result.Verdict = VerdictLocalFirewall
-			result.Summary = i18n.T(ctx, "A firewall rule on this host affects protocol 47, which is what GRE uses.")
-			result.SuggestedFix = []string{
-				i18n.T(ctx, "Review the rule the evidence quotes and allow protocol 47 to and from the remote "+
-					"endpoint."),
-			}
-			return result
-		}
+	// Which way traffic is moving is what separates "nothing is coming back"
+	// from "something is coming back but it is not usable".
+	if txMoved && !rxMoved {
+		vote("counters", VerdictNoReturnTraffic, 5,
+			i18n.T(ctx, "%s is sending but nothing is coming back.", name))
+	}
+	if rxMoved && !tunnelReachable {
+		vote("counters", VerdictKeyOrAddressing, 5,
+			i18n.T(ctx, "%s is receiving traffic, but probes through it are not being answered.", name))
+	}
+	if !underlayReachable && !txMoved && !rxMoved {
+		vote("underlay", VerdictUnderlayUnreachable, 5,
+			i18n.T(ctx, "The remote endpoint %s did not answer, so the two servers may not be able to reach each other at all.", rec.RemoteEndpoint))
 	}
 
-	switch {
-	// 4. Sending but nothing coming back.
-	case txMoved && !rxMoved:
-		result.Verdict = VerdictNoReturnTraffic
-		result.Summary = i18n.T(ctx, "%s is sending but nothing is coming back.", name)
-		result.SuggestedFix = []string{
-			i18n.T(ctx, "Protocol 47 may be filtered by a provider or a firewall between the two servers."),
-			i18n.T(ctx, "The other end may not be configured yet; check that its tunnel exists and is up."),
-			i18n.T(ctx, "The remote endpoint may be wrong: this tunnel points at %s.", rec.RemoteEndpoint),
-		}
-		return result
-
-	// 5. Traffic arriving but the probes still failing means the packets are
-	// getting here and being rejected or misdirected.
-	case rxMoved && !tunnelReachable:
-		result.Verdict = VerdictKeyOrAddressing
-		result.Summary = i18n.T(ctx,
-			"%s is receiving traffic, but probes through it are not being answered.", name)
-		result.SuggestedFix = []string{
-			i18n.T(ctx, "Check that the GRE keys match exactly on both servers; a mismatch makes the kernel "+
-				"drop the packets."),
-			i18n.T(ctx, "Check that the peer address %s is inside this tunnel's own subnet.", target),
-			i18n.T(ctx, "Check that the MTU, the checksum flags and the sequence flags match on both ends."),
-		}
-		return result
-
-	// 6. Small packets get through and large ones do not.
-	case tunnelReachable:
+	// Small packets get through and large ones do not.
+	mtuBroken := false
+	if tunnelReachable {
 		if mtu := s.probeMtuShape(ctx, rec, source, target); mtu != nil {
 			result.Evidence = append(result.Evidence, *mtu)
 			if broken, ok := mtu.Data.(map[string]any)["large_packets_fail"].(bool); ok && broken {
-				result.Verdict = VerdictMtuProblem
-				result.Summary = i18n.T(ctx,
-					"%s answers small packets but not large ones, which is an MTU problem.", name)
-				result.SuggestedFix = []string{
-					i18n.T(ctx, "Run the path MTU probe and apply the tunnel MTU it recommends."),
-					i18n.T(ctx, "Set the same MTU on both ends: they have to agree."),
-				}
-				return result
+				mtuBroken = true
+				vote("mtu", VerdictMtuProblem, 4,
+					i18n.T(ctx, "%s answers small packets but not large ones, which is an MTU problem.", name))
 			}
 		}
-		result.Verdict = VerdictHealthy
-		result.Summary = i18n.T(ctx, "%s is up and answering, with %.0f%% of probes lost.", name, tunnelLoss)
-		if tunnelLoss > 0 {
-			result.Confidence = ConfidenceLow
-			result.Summary = i18n.T(ctx, "%s is answering but losing %.0f%% of probes.", name, tunnelLoss)
-			result.SuggestedFix = []string{
-				i18n.T(ctx, "Watch the monitoring history: intermittent loss is usually the path rather than "+
-					"the tunnel."),
-			}
-		}
-		return result
+	}
+	_ = mtuBroken
+
+	// A tunnel that answers but loses probes is healthy with a warning, not
+	// broken: the loss votes for Healthy, weakly, so a stronger failure
+	// signal still wins.
+	if tunnelReachable && tunnelLoss > 0 {
+		vote("tunnel_probe", VerdictHealthy, 2,
+			i18n.T(ctx, "%s is answering but losing %.0f%% of probes.", name, tunnelLoss))
 	}
 
-	// Nothing is moving in either direction.
-	if !underlayReachable {
-		result.Verdict = VerdictUnderlayUnreachable
+	if len(votes) == 0 {
+		// Nothing measured a failure and the tunnel does not answer cleanly:
+		// the remote endpoint answers, but the tunnel carries nothing in
+		// either direction.
+		vote("counters", VerdictNoReturnTraffic, 5,
+			i18n.T(ctx, "The remote endpoint answers, but %s is not carrying traffic in either direction.", name))
+	}
+
+	result.Votes = votes
+	winner := winningVerdict(votes)
+	result.Verdict = winner
+	result.Summary, result.SuggestedFix = verdictSummary(ctx, winner, name, rec, tunnelLoss)
+	if winner == VerdictHealthy {
 		result.Confidence = ConfidenceLow
-		result.Summary = i18n.T(ctx,
-			"The remote endpoint %s did not answer, so the two servers may not be able to reach each other at all.",
-			rec.RemoteEndpoint)
-		result.SuggestedFix = []string{
-			i18n.T(ctx, "Check that the remote endpoint address is right."),
-			i18n.T(ctx, "ICMP is often filtered while GRE still works, so confirm this before acting on it."),
-			i18n.T(ctx, "Check that the other end is up and reachable by some other means."),
-		}
-		return result
-	}
-
-	result.Verdict = VerdictNoReturnTraffic
-	result.Summary = i18n.T(ctx,
-		"The remote endpoint answers, but %s is not carrying traffic in either direction.", name)
-	result.SuggestedFix = []string{
-		i18n.T(ctx, "Protocol 47 may be filtered even though ICMP is not."),
-		i18n.T(ctx, "Check that the other end's tunnel exists, is up, and points back at this server."),
 	}
 	return result
+}
+
+// verdictPriority breaks ties between causes with the same total weight: the
+// more specific and the more local the cause, the earlier it wins.
+var verdictPriority = []string{
+	VerdictInterfaceMissing,
+	VerdictInterfaceDown,
+	VerdictLocalFirewall,
+	VerdictConfigMismatch,
+	VerdictNoReturnTraffic,
+	VerdictKeyOrAddressing,
+	VerdictUnderlayUnreachable,
+	VerdictMtuProblem,
+	VerdictHealthy,
+}
+
+// winningVerdict returns the cause with the highest total vote weight,
+// breaking ties by verdictPriority.
+func winningVerdict(votes []Vote) string {
+	totals := map[string]int{}
+	for _, v := range votes {
+		totals[v.Cause] += v.Weight
+	}
+	best := ""
+	bestWeight := -1
+	for _, cause := range verdictPriority {
+		if totals[cause] > bestWeight {
+			best, bestWeight = cause, totals[cause]
+		}
+	}
+	if best == "" && len(votes) > 0 {
+		best = votes[0].Cause
+	}
+	return best
+}
+
+// verdictSummary renders the summary and the suggested fix for a winning
+// cause.
+func verdictSummary(ctx context.Context, verdict, name string, rec tunnel.Record, tunnelLoss float64) (string, []string) {
+	switch verdict {
+	case VerdictLocalFirewall:
+		return i18n.T(ctx, "A firewall rule on this host affects protocol 47, which is what GRE uses."),
+			[]string{i18n.T(ctx, "Review the rule the evidence quotes and allow protocol 47 to and from the remote endpoint.")}
+	case VerdictConfigMismatch:
+		return i18n.T(ctx, "The live state of %s does not match the stored record, so the panel is managing a tunnel the kernel does not have.",
+				name),
+			[]string{
+				i18n.T(ctx, "Reapply this tunnel, which rebuilds the live state from the stored record."),
+				i18n.T(ctx, "Check whether something outside the panel changed the interface or its unit."),
+			}
+	case VerdictNoReturnTraffic:
+		return i18n.T(ctx, "%s is sending but nothing is coming back.", name),
+			[]string{
+				i18n.T(ctx, "Protocol 47 may be filtered by a provider or a firewall between the two servers."),
+				i18n.T(ctx, "Protocol 47 may be filtered even though ICMP is not."),
+				i18n.T(ctx, "The other end may not be configured yet; check that its tunnel exists and is up."),
+				i18n.T(ctx, "Check that the other end's tunnel exists, is up, and points back at this server."),
+				i18n.T(ctx, "The remote endpoint may be wrong: this tunnel points at %s.", rec.RemoteEndpoint),
+			}
+	case VerdictKeyOrAddressing:
+		return i18n.T(ctx, "%s is receiving traffic, but probes through it are not being answered.", name),
+			[]string{
+				i18n.T(ctx, "Check that the GRE keys match exactly on both servers; a mismatch makes the kernel drop the packets."),
+				i18n.T(ctx, "Check that the peer address %s is inside this tunnel's own subnet.", probeTarget(rec)),
+				i18n.T(ctx, "Check that the MTU, the checksum flags and the sequence flags match on both ends."),
+			}
+	case VerdictUnderlayUnreachable:
+		return i18n.T(ctx, "The remote endpoint %s did not answer, so the two servers may not be able to reach each other at all.",
+				rec.RemoteEndpoint),
+			[]string{
+				i18n.T(ctx, "Check that the remote endpoint address is right."),
+				i18n.T(ctx, "ICMP is often filtered while GRE still works, so confirm this before acting on it."),
+				i18n.T(ctx, "Check that the other end is up and reachable by some other means."),
+			}
+	case VerdictMtuProblem:
+		return i18n.T(ctx, "%s answers small packets but not large ones, which is an MTU problem.", name),
+			[]string{
+				i18n.T(ctx, "Run the path MTU probe and apply the tunnel MTU it recommends."),
+				i18n.T(ctx, "Set the same MTU on both ends: they have to agree."),
+			}
+	case VerdictHealthy:
+		return i18n.T(ctx, "%s is up and answering, with %.0f%% of probes lost.", name, tunnelLoss),
+			[]string{i18n.T(ctx, "Watch the monitoring history: intermittent loss is usually the path rather than the tunnel.")}
+	default:
+		return i18n.T(ctx, "%s is not carrying traffic.", name),
+			[]string{i18n.T(ctx, "Reapply this tunnel, which rebuilds it from the stored configuration.")}
+	}
+}
+
+// probeTarget returns the peer address the tunnel probe uses, for the
+// key-or-addressing fix.
+func probeTarget(rec tunnel.Record) string {
+	_, target := probeEndpoints(rec)
+	return target
 }
 
 // watchCounters reads the interface counters twice, so which way traffic is

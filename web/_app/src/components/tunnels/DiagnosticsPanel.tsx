@@ -7,6 +7,7 @@ import {
   CheckCircle2,
   HelpCircle,
   PlugZap,
+  Route,
   Ruler,
   Square,
   Waypoints,
@@ -19,6 +20,7 @@ import type {
   AnalyzeResult,
   DiagnosticRun,
   MtuProbeResponse,
+  PathTestResult,
   PingPacket,
   PingResult,
   SettingsResponse,
@@ -26,7 +28,7 @@ import type {
   TracerouteResult,
   Tunnel,
 } from '@/lib/types'
-import { formatMs, formatPercent } from '@/lib/format'
+import { formatMs, formatPercent, toDigits } from '@/lib/format'
 import { usePreferences } from '@/providers/PreferencesProvider'
 import { useToast } from '@/providers/ToastProvider'
 import { Button } from '../ui/button'
@@ -40,6 +42,7 @@ export function DiagnosticsPanel({ tunnel }: { tunnel: Tunnel }) {
   return (
     <div className="space-y-4">
       <AnalyzeCard tunnel={tunnel} />
+      <PathTestCard tunnel={tunnel} />
       <div className="grid gap-4 lg:grid-cols-2">
         <PingCard tunnel={tunnel} />
         <div className="space-y-4">
@@ -105,6 +108,113 @@ function AnalyzeCard({ tunnel }: { tunnel: Tunnel }) {
   )
 }
 
+/**
+ * The path test, one measurement of the path in a single run: latency and
+ * loss through the tunnel, the largest packet that fits, and the hops to the
+ * far end. It is the benchmark a carrier switch is judged against, so it
+ * sits next to the diagnosis rather than buried among the individual probes.
+ */
+function PathTestCard({ tunnel }: { tunnel: Tunnel }) {
+  const { t } = useTranslation()
+  const { digits } = usePreferences()
+
+  const testMutation = useMutation({
+    mutationFn: () =>
+      api.post<{ result: PathTestResult; run?: DiagnosticRun }>(
+        `/tunnels/${tunnel.tunnel_id}/diagnostics/path-test`,
+        { count: 10 },
+      ),
+  })
+
+  const result = testMutation.data?.result
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Route className="size-4 text-muted-foreground" aria-hidden="true" />
+          {t('diagnostics.pathTest.title')}
+        </CardTitle>
+        <Button
+          variant="primary"
+          size="sm"
+          loading={testMutation.isPending}
+          onClick={() => testMutation.mutate()}
+        >
+          {testMutation.isPending ? t('diagnostics.pathTest.running') : t('diagnostics.pathTest.run')}
+        </Button>
+      </CardHeader>
+      <CardContent>
+        {testMutation.isPending ? (
+          <div className="space-y-2">
+            <Skeleton className="h-6 w-40" />
+            <Skeleton className="h-16" />
+          </div>
+        ) : testMutation.error ? (
+          <ErrorState error={testMutation.error} onRetry={() => testMutation.mutate()} compact />
+        ) : !result ? (
+          <p className="text-xs text-muted-foreground">{t('diagnostics.pathTest.never')}</p>
+        ) : (
+          <div className="space-y-3">
+            <p dir="auto" className="text-xs">
+              {result.summary}
+            </p>
+            <dl className="grid gap-2 sm:grid-cols-3">
+              <div className="rounded-md border border-border bg-surface-sunken p-2">
+                <dt className="text-2xs font-medium text-muted-foreground">
+                  {t('diagnostics.pathTest.latency')}
+                </dt>
+                <dd className="text-sm font-medium">
+                  {result.ping?.rtt_avg_ms != null ? formatMs(result.ping.rtt_avg_ms, digits) ?? '—' : '—'}
+                </dd>
+                <dd className="text-2xs text-muted-foreground">
+                  {result.ping
+                    ? t('diagnostics.pathTest.received', {
+                        received: toDigits(String(result.ping.received), digits),
+                        sent: toDigits(String(result.ping.sent), digits),
+                        loss: toDigits(String(Math.round(result.ping.loss_percent)), digits),
+                      })
+                    : '—'}
+                </dd>
+              </div>
+              <div className="rounded-md border border-border bg-surface-sunken p-2">
+                <dt className="text-2xs font-medium text-muted-foreground">
+                  {t('diagnostics.pathTest.largestPacket')}
+                </dt>
+                <dd className="text-sm font-medium">
+                  {result.mtu?.discovered_path_mtu
+                    ? t('diagnostics.pathTest.bytesValue', { value: toDigits(String(result.mtu.discovered_path_mtu), digits) })
+                    : '—'}
+                </dd>
+                <dd className="text-2xs text-muted-foreground">
+                  {result.mtu
+                    ? t('diagnostics.pathTest.recommendedMtu', { value: toDigits(String(result.mtu.recommended_tunnel_mtu), digits) })
+                    : '—'}
+                </dd>
+              </div>
+              <div className="rounded-md border border-border bg-surface-sunken p-2">
+                <dt className="text-2xs font-medium text-muted-foreground">
+                  {t('diagnostics.pathTest.hops')}
+                </dt>
+                <dd className="text-sm font-medium">
+                  {result.traceroute ? toDigits(String((result.traceroute.hops ?? []).length), digits) : '—'}
+                </dd>
+                <dd className="text-2xs text-muted-foreground">
+                  {result.traceroute
+                    ? result.traceroute.reached
+                      ? t('diagnostics.pathTest.reached')
+                      : t('diagnostics.pathTest.notReached')
+                    : '—'}
+                </dd>
+              </div>
+            </dl>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  )
+}
+
 function VerdictCard({ result }: { result: AnalyzeResult }) {
   const { t } = useTranslation()
 
@@ -151,6 +261,31 @@ function VerdictCard({ result }: { result: AnalyzeResult }) {
               </li>
             ))}
           </ul>
+        </section>
+      ) : null}
+
+      {(result.votes ?? []).length ? (
+        <section>
+          <h4 className="mb-1.5 text-xs font-medium">{t('diagnostics.analyze.votes')}</h4>
+          <dl className="space-y-1.5">
+            {(result.votes ?? []).map((vote, index) => {
+              const causeKey = `diagnostics.analyze.verdicts.${vote.cause}`
+              const causeLabel = t(causeKey) === causeKey ? vote.cause : t(causeKey)
+              return (
+                <div key={`${vote.signal}-${index}`} className="rounded-md border border-border bg-surface-sunken p-2">
+                  <dt className="flex items-center justify-between gap-2 text-2xs font-medium text-muted-foreground">
+                    <span>{t(`diagnostics.analyze.evidenceName.${vote.signal}`, { defaultValue: vote.signal })}</span>
+                    <span>
+                      {causeLabel} · {t('diagnostics.analyze.voteWeight')} {vote.weight}
+                    </span>
+                  </dt>
+                  <dd dir="auto" className="text-xs">
+                    {vote.detail}
+                  </dd>
+                </div>
+              )
+            })}
+          </dl>
         </section>
       ) : null}
 
