@@ -83,6 +83,14 @@ type Payload struct {
 	// serves on it and the dialling side connects to it.
 	WssToken *string `json:"wss_token,omitempty"`
 	WssPort  *int64  `json:"wss_port,omitempty"`
+	// OmniTransport is the omnitun transport of an OmniTunnel tunnel. The
+	// key must be identical on both ends or the far end refuses the
+	// connection, so it travels in the code; the port and the parallel-link
+	// count travel with it.
+	OmniTransport *string `json:"omni_transport,omitempty"`
+	OmniKey       *string `json:"omni_key,omitempty"`
+	OmniPort      *int64  `json:"omni_port,omitempty"`
+	OmniConns     *int64  `json:"omni_conns,omitempty"`
 
 	HasInputChecksum  bool `json:"icsum,omitempty"`
 	HasOutputChecksum bool `json:"ocsum,omitempty"`
@@ -250,6 +258,10 @@ func (p Payload) Flipped() validate.TunnelInput {
 		EspKey:         p.EspKey,
 		WssToken:       p.WssToken,
 		WssPort:        p.WssPort,
+		OmniTransport:  p.OmniTransport,
+		OmniKey:        p.OmniKey,
+		OmniPort:       p.OmniPort,
+		OmniConns:      p.OmniConns,
 
 		HasInputChecksum:  p.HasInputChecksum,
 		HasOutputChecksum: p.HasOutputChecksum,
@@ -303,6 +315,18 @@ type Summary struct {
 	EspKeyPresent   bool   `json:"esp_key_present,omitempty"`
 	WssTokenPresent bool   `json:"wss_token_present,omitempty"`
 	WssPort         *int64 `json:"wss_port,omitempty"`
+	OmniTransport   string `json:"omni_transport,omitempty"`
+	OmniKeyPresent  bool   `json:"omni_key_present,omitempty"`
+	OmniPort        *int64 `json:"omni_port,omitempty"`
+	OmniConns       *int64 `json:"omni_conns,omitempty"`
+}
+
+// derefString returns the value a pointer holds, or "" when it holds none.
+func derefString(p *string) string {
+	if p == nil {
+		return ""
+	}
+	return *p
 }
 
 // Summarise describes the flipped tunnel.
@@ -322,5 +346,9 @@ func (p Payload) Summarise() Summary {
 		EspKeyPresent:   p.EspKey != nil,
 		WssTokenPresent: p.WssToken != nil,
 		WssPort:         p.WssPort,
+		OmniTransport:   derefString(p.OmniTransport),
+		OmniKeyPresent:  p.OmniKey != nil,
+		OmniPort:        p.OmniPort,
+		OmniConns:       p.OmniConns,
 	}
 }

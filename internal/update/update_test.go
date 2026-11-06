@@ -3,10 +3,12 @@ package update
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -63,13 +65,13 @@ func TestParseVersionRejectsWhatItCannotOrder(t *testing.T) {
 // serve, and the install would then fail on a 404.
 func TestTheRepositoryFollowsTheReleaseBase(t *testing.T) {
 	cases := map[string]string{
-		DefaultReleaseBase: "DrSaeedHub/Tunnel-Panel",
+		DefaultReleaseBase: "irluca/Tunnel-Panel",
 		"https://github.com/someone/their-fork/releases/download": "someone/their-fork",
 		// Not a GitHub URL, and an offline bundle's local directory: neither
 		// names a repository, and the default is the only place left to ask.
-		"https://mirror.example.com/panel": "DrSaeedHub/Tunnel-Panel",
-		"/opt/gre-panel-bundle/artifacts":  "DrSaeedHub/Tunnel-Panel",
-		"":                                 "DrSaeedHub/Tunnel-Panel",
+		"https://mirror.example.com/panel": "irluca/Tunnel-Panel",
+		"/opt/gre-panel-bundle/artifacts":  "irluca/Tunnel-Panel",
+		"":                                 "irluca/Tunnel-Panel",
 	}
 	for base, want := range cases {
 		if got := repositoryOf(base); got != want {
@@ -123,7 +125,7 @@ func TestAnAvailableUpdateIsReportedWithWhereItCameFrom(t *testing.T) {
 	if status.CheckedAt == "" || status.Error != "" {
 		t.Errorf("a successful check reported %q at %q", status.Error, status.CheckedAt)
 	}
-	if status.Source != "DrSaeedHub/Tunnel-Panel" {
+	if status.Source != "irluca/Tunnel-Panel" {
 		t.Errorf("source = %q", status.Source)
 	}
 }
@@ -535,4 +537,87 @@ func waitFor(t *testing.T, condition func() bool, message string) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	t.Fatal(message)
+}
+
+// The check reads the release's checksum file and carries the checksum of
+// this host's binary, so the operator knows the offered update is
+// installable before the installer is ever run.
+func TestAnUpdateCarriesItsChecksumWhenTheManifestHasIt(t *testing.T) {
+	want := strings.Repeat("a", 64)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/SHA256SUMS") {
+			fmt.Fprintf(w, "%s  gre-panel-linux-%s\n%s  tnp-linux-%s\n", want, runtime.GOARCH, strings.Repeat("b", 64), runtime.GOARCH)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(githubRelease{TagName: "v0.2.0", Name: "Panel v0.2.0", Body: "Fixed things."})
+	}))
+	t.Cleanup(server.Close)
+
+	checker := NewChecker(CheckerDeps{
+		CurrentVersion: "v0.1.5", APIURL: server.URL, ReleaseBase: server.URL,
+		Client: server.Client(), Settings: fixedSettings{enabled: true, hours: 6},
+	})
+	status := checker.Refresh(context.Background())
+	if !status.UpdateAvailable {
+		t.Fatalf("no update reported: %+v", status)
+	}
+	if !status.Latest.ChecksumVerified || status.Latest.Checksum != want {
+		t.Errorf("the update was not carried verified: checksum %q verified %v", status.Latest.Checksum, status.Latest.ChecksumVerified)
+	}
+}
+
+// A release whose checksum file is missing is still a real release, and the
+// version is still offered — but it is offered unverified, because the
+// installer will refuse it at apply time and the operator should learn that
+// here, not there.
+func TestAnUpdateIsOfferedUnverifiedWhenTheManifestIsMissing(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/SHA256SUMS") {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(githubRelease{TagName: "v0.2.0", Name: "Panel v0.2.0", Body: "Fixed things."})
+	}))
+	t.Cleanup(server.Close)
+
+	checker := NewChecker(CheckerDeps{
+		CurrentVersion: "v0.1.5", APIURL: server.URL, ReleaseBase: server.URL,
+		Client: server.Client(), Settings: fixedSettings{enabled: true, hours: 6},
+	})
+	status := checker.Refresh(context.Background())
+	if !status.UpdateAvailable {
+		t.Fatalf("no update reported: %+v", status)
+	}
+	if status.Latest.ChecksumVerified || status.Latest.Checksum != "" {
+		t.Errorf("a missing manifest was reported verified: %+v", status.Latest)
+	}
+}
+
+// A manifest with entries for other architectures only is no use to this
+// host: the update is offered unverified.
+func TestAnUpdateIsOfferedUnverifiedWhenTheManifestHasNoEntryForThisHost(t *testing.T) {
+	other := "amd64"
+	if runtime.GOARCH == "amd64" {
+		other = "arm64"
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/SHA256SUMS") {
+			fmt.Fprintf(w, "%s  gre-panel-linux-%s\n", strings.Repeat("c", 64), other)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(githubRelease{TagName: "v0.2.0", Name: "Panel v0.2.0", Body: "Fixed things."})
+	}))
+	t.Cleanup(server.Close)
+
+	checker := NewChecker(CheckerDeps{
+		CurrentVersion: "v0.1.5", APIURL: server.URL, ReleaseBase: server.URL,
+		Client: server.Client(), Settings: fixedSettings{enabled: true, hours: 6},
+	})
+	status := checker.Refresh(context.Background())
+	if !status.UpdateAvailable {
+		t.Fatalf("no update reported: %+v", status)
+	}
+	if status.Latest.ChecksumVerified {
+		t.Errorf("a manifest with no entry for this host was reported verified: %+v", status.Latest)
+	}
 }

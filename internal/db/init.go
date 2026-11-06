@@ -216,6 +216,10 @@ var columnAdditions = []columnAddition{
 	// The GRE-over-WSS shared token. NULL on every tunnel that predates it
 	// and on every tunnel that is not GRE over WSS.
 	{"Tunnel", "WssToken", "TEXT"},
+	{"Tunnel", "OmniTransport", "TEXT"},
+	{"Tunnel", "OmniKey", "TEXT"},
+	{"Tunnel", "OmniPort", "INTEGER"},
+	{"Tunnel", "OmniConns", "INTEGER"},
 
 	// The GRE-over-WSS port. NULL means the default, 443.
 	{"Tunnel", "WssPort", "INTEGER"},

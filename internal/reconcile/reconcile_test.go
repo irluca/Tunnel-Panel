@@ -153,6 +153,21 @@ func (h *harness) espTunnel(t *testing.T, name string, number int, address strin
 	})
 }
 
+// omniTunnel plants a TUN interface owned by an omnitun binary: no tunnel
+// attributes in the kernel, because the endpoints and key live in the
+// binary.
+func (h *harness) omniTunnel(t *testing.T, name string, number int, address string) {
+	t.Helper()
+	h.links.AddLink(link.Link{
+		Name: name, Index: 10 + number, MTU: 1400, Kind: link.KindOmniTunnel,
+		OperState: "UNKNOWN", IsUp: true, IsLowerUp: true, IsRunning: true,
+		Flags: []string{"POINTOPOINT", "NOARP", "UP", "LOWER_UP"},
+		Addresses: []link.Address{
+			{Address: address, PrefixLength: 30, Family: link.FamilyIPv4, Scope: "global"},
+		},
+	})
+}
+
 // legacyUnit writes the unit file the old script produced, defects and all.
 func (h *harness) legacyUnit(t *testing.T, name string) string {
 	t.Helper()
@@ -464,6 +479,55 @@ func TestAdoptEspRegeneratesTheKeyAndWarns(t *testing.T) {
 	var regenerated bool
 	for _, w := range result.Warnings {
 		if w.Code == WarnEspKeyRegenerated {
+			regenerated = true
+		}
+	}
+	if !regenerated {
+		t.Fatalf("no warning that the key was regenerated: %+v", result.Warnings)
+	}
+}
+
+// An OmniTunnel tunnel's key is not readable from the kernel, so adopting
+// one generates a fresh key and warns that the far end must be re-paired.
+func TestAdoptOmniRegeneratesTheKeyAndWarns(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+
+	h.omniTunnel(t, "omnitunnel-a-7", 7, "172.17.7.1")
+	// The kernel reports no endpoints and no transport for a TUN, so the
+	// adoption recovers them from the panel-owned unit, which carries the
+	// exact omnitun command line.
+	unit := persist.OwnershipMarker + " interface=omnitunnel-a-7\n\n[Unit]\nDescription=OmniTunnel udp Tunnel omnitunnel-a-7 (managed by gre-panel)\n\n[Service]\nType=simple\nExecStart=/var/lib/gre-panel/bin/omnitun udp -L 203.0.113.10 -R 198.51.100.20 -A 172.17.7.1 -P 172.17.7.2 -p 8443 -k 00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff -T omnitunnel-a-7 -M 1400\nRestart=always\n"
+	if err := os.WriteFile(filepath.Join(h.dir, "systemd", "omnitunnel-a-7.service"), []byte(unit), 0o600); err != nil {
+		t.Fatalf("writing the unit failed: %v", err)
+	}
+	h.links.Reset()
+
+	result, err := h.service.Adopt(ctx, AdoptRequest{InterfaceName: "omnitunnel-a-7"})
+	if err != nil {
+		t.Fatalf("adoption failed: %v", err)
+	}
+
+	rec := result.Tunnel
+	if rec.TunnelTypeID != model.TunnelTypeOmniTunnel {
+		t.Fatalf("the adopted tunnel is type %d, want OmniTunnel", rec.TunnelTypeID)
+	}
+	if rec.OmniKey == nil || len(*rec.OmniKey) != 64 {
+		t.Fatalf("no fresh OmniTunnel key was generated: %v", rec.OmniKey)
+	}
+	if rec.OmniTransport == nil || *rec.OmniTransport != "udp" {
+		t.Fatalf("the transport was not recovered from the unit: %v", rec.OmniTransport)
+	}
+	if rec.LocalEndpoint != "203.0.113.10" || rec.RemoteEndpoint != "198.51.100.20" {
+		t.Fatalf("the endpoints were not recovered from the unit: %s, %s", rec.LocalEndpoint, rec.RemoteEndpoint)
+	}
+	if rec.OmniPort == nil || *rec.OmniPort != 8443 {
+		t.Fatalf("the port was not recovered from the unit: %v", rec.OmniPort)
+	}
+
+	var regenerated bool
+	for _, w := range result.Warnings {
+		if w.Code == WarnOmniKeyRegenerated {
 			regenerated = true
 		}
 	}

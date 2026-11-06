@@ -115,6 +115,14 @@ type tunnelPatch struct {
 	// EspKey is the pre-shared ESP key. Setting it rotates the key; the
 	// value is never returned by the API.
 	EspKey *string `json:"esp_key,omitempty"`
+	// OmniTransport is the omnitun transport. OmniKey is the pre-shared key;
+	// setting it rotates the key. OmniPort is the port the listening side
+	// serves on. OmniConns is the parallel-link count for mux and ws.
+	OmniTransport *string     `json:"omni_transport,omitempty"`
+	OmniKey       *string     `json:"omni_key,omitempty"`
+	OmniPort      nullableInt `json:"omni_port,omitempty"`
+	OmniConns     nullableInt `json:"omni_conns,omitempty"`
+
 	// WssToken is the shared WSS token. Setting it rotates the token; the
 	// value is never returned by the API.
 	WssToken *string `json:"wss_token,omitempty"`
@@ -210,6 +218,14 @@ func (p tunnelPatch) applyTo(in *validate.TunnelInput) {
 	if p.WssToken != nil {
 		in.WssToken = p.WssToken
 	}
+	if p.OmniTransport != nil {
+		in.OmniTransport = p.OmniTransport
+	}
+	if p.OmniKey != nil {
+		in.OmniKey = p.OmniKey
+	}
+	setNullable(&in.OmniPort, p.OmniPort)
+	setNullable(&in.OmniConns, p.OmniConns)
 	setNullable(&in.WssPort, p.WssPort)
 
 	setBool(&in.HasInputChecksum, p.HasInputChecksum)

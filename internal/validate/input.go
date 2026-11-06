@@ -56,6 +56,17 @@ type TunnelInput struct {
 	// port-forwarding section asks for a port rather than assuming one.
 	WssPort *int64 `json:"wss_port,omitempty"`
 
+	// OmniTransport is the omnitun transport of an OmniTunnel tunnel: one of
+	// udp, tcp, mux, ws or icmp. OmniKey is its 64-hex pre-shared key (icmp
+	// has none); OmniPort is the port the listening side serves on (icmp has
+	// none — it is asked from the operator, never defaulted); OmniConns is
+	// the parallel-link count for mux and ws. The key is a credential and is
+	// never returned by the API.
+	OmniTransport *string `json:"omni_transport,omitempty"`
+	OmniKey       *string `json:"omni_key,omitempty"`
+	OmniPort      *int64  `json:"omni_port,omitempty"`
+	OmniConns     *int64  `json:"omni_conns,omitempty"`
+
 	HasInputChecksum  bool `json:"has_input_checksum"`
 	HasOutputChecksum bool `json:"has_output_checksum"`
 	HasInputSequence  bool `json:"has_input_sequence"`

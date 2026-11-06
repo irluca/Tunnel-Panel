@@ -104,6 +104,7 @@ func init() {
 		"changing %s needs the interface deleted and rebuilt: %s":                                      "تغییر %s نیاز دارد که رابط حذف و دوباره ساخته شود: %s",
 		"%s could not be configured and could not be cleaned up either: %s (rollback also failed: %s)": "رابط %s پیکربندی نشد و پاک‌سازی آن هم ممکن نبود: %s (بازگردانی هم شکست خورد: %s)",
 		"the tunnel is already %s":                                                  "تونل از پیش %s است",
+		"the omnitun binary cannot be installed on this panel: no binary manager is configured": "باینری omnitun روی این پنل نصب نمی‌شود: هیچ مدیر باینری‌ای پیکربندی نشده است",
 		"switching is only between GRE and ESP":                                     "سوییچ فقط میان GRE و ESP انجام می‌شود",
 		"the predecessor's record could not be restored: %s":                        "سابقهٔ تونل پیشین قابل بازگردانی نبود: %s",
 		"the rollback ran but the previous tunnel did not come back: %s":            "بازگردانی اجرا شد اما تونل پیشین برنگشت: %s",

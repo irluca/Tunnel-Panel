@@ -73,6 +73,10 @@ var entityDDL = []string{
 		OKey INTEGER,
 		EspKey TEXT,
 		WssToken TEXT,
+		OmniTransport TEXT,
+		OmniKey TEXT,
+		OmniPort INTEGER,
+		OmniConns INTEGER,
 		WssPort INTEGER,
 
 		HasInputChecksum   INTEGER NOT NULL DEFAULT 0,

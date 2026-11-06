@@ -239,6 +239,31 @@ func SpecOf(rec Record) link.TunnelSpec {
 			spec.WssPort = int(*rec.WssPort)
 		}
 	}
+	if rec.TunnelTypeID == model.TunnelTypeOmniTunnel {
+		// Side A listens, side B dials — except udp, which is symmetric and
+		// ignores the mode. The rule is fixed so the two ends agree without
+		// another field to keep in sync.
+		if rec.TunnelSideID == model.TunnelSideB {
+			spec.OmniMode = link.OmniModeDial
+		} else {
+			spec.OmniMode = link.OmniModeListen
+		}
+		if rec.OmniTransport != nil {
+			spec.OmniTransport = *rec.OmniTransport
+		}
+		if rec.OmniKey != nil {
+			spec.OmniKey = *rec.OmniKey
+		}
+		// The port is required at creation for every transport that has
+		// one, so a stored record has one. A record that somehow has none
+		// leaves the port at zero, and the binary refuses to start on it.
+		if rec.OmniPort != nil {
+			spec.OmniPort = int(*rec.OmniPort)
+		}
+		if rec.OmniConns != nil {
+			spec.OmniConns = int(*rec.OmniConns)
+		}
+	}
 	return spec
 }
 
@@ -320,6 +345,10 @@ func recordFromInput(in validate.TunnelInput) model.Tunnel {
 		EspKey:            in.EspKey,
 		WssToken:          in.WssToken,
 		WssPort:           in.WssPort,
+		OmniTransport:     in.OmniTransport,
+		OmniKey:           in.OmniKey,
+		OmniPort:          in.OmniPort,
+		OmniConns:         in.OmniConns,
 
 		HasInputChecksum:  in.HasInputChecksum,
 		HasOutputChecksum: in.HasOutputChecksum,
@@ -454,7 +483,7 @@ func (p *planner) PlanCreate(ctx context.Context, rec Record, keepalive Keepaliv
 func unitFileMode(kind string) os.FileMode {
 	// The ESP unit's ExecStart lines carry the key, and the GRE-over-WSS
 	// unit's carry the token: both are written readable only by root.
-	if kind == link.KindESP || kind == link.KindGREWSS {
+	if kind == link.KindESP || kind == link.KindGREWSS || kind == link.KindOmniTunnel {
 		return persist.SecretFileMode
 	}
 	return 0

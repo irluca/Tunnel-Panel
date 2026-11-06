@@ -36,6 +36,10 @@ const (
 	// interface is a TUN the relay creates, not a kernel GRE interface; see
 	// internal/grewss and the relay unit.
 	KindGREWSS = "gre-wss"
+	// KindOmniTunnel is the panel's name for an OmniTunnel tunnel. The
+	// interface is a TUN the omnitun binary creates, not a kernel
+	// interface; see internal/link/omnitunnel.go and the omnitunnel unit.
+	KindOmniTunnel = "omnitunnel"
 )
 
 // Manager implementation names, reported through /system/capabilities.
@@ -58,13 +62,23 @@ var (
 
 // TunnelKinds lists every tunnel kind the panel understands, in a stable order.
 func TunnelKinds() []string {
-	return []string{KindGRE, KindGRETAP, KindIP6GRE, KindIP6GRETAP, KindESP, KindGREWSS}
+	return []string{KindGRE, KindGRETAP, KindIP6GRE, KindIP6GRETAP, KindESP, KindGREWSS, KindOmniTunnel}
+}
+
+// IsTunRelayKind reports whether a tunnel kind is carried by a userspace
+// relay that owns a TUN interface — GRE-over-WSS and OmniTunnel. Both kinds
+// have no tunnel attributes in the kernel: the endpoints, keys and token
+// live in the relay. An interface of either kind is the same thing to a
+// reader, so verification treats them as matching each other; the interface
+// name is unique per tunnel, so this cannot confuse two tunnels.
+func IsTunRelayKind(kind string) bool {
+	return kind == KindGREWSS || kind == KindOmniTunnel
 }
 
 // IsTunnelKind reports whether a kind names a tunnel this panel manages.
 func IsTunnelKind(kind string) bool {
 	switch kind {
-	case KindGRE, KindGRETAP, KindIP6GRE, KindIP6GRETAP, KindESP, KindGREWSS:
+	case KindGRE, KindGRETAP, KindIP6GRE, KindIP6GRETAP, KindESP, KindGREWSS, KindOmniTunnel:
 		return true
 	}
 	return false
@@ -333,6 +347,21 @@ type TunnelSpec struct {
 	WssToken string `json:"-"`
 	WssPort  int
 	WssMode  string
+
+	// OmniTunnel tunnels only. OmniTransport is one of udp, tcp, mux, ws or
+	// icmp; OmniKey is the 64-hex pre-shared key (icmp has none); OmniPort
+	// is the port the listening side serves on and the dialling side
+	// connects to (icmp has none — it is asked from the operator, never
+	// defaulted); OmniConns is the parallel-link count for mux and ws;
+	// OmniMode is "listen" on the side that serves and "dial" on the side
+	// that connects (udp is symmetric and ignores it). The key is a
+	// credential and is never serialised, for the same reason as the ESP
+	// key above.
+	OmniTransport string
+	OmniKey       string `json:"-"`
+	OmniPort      int
+	OmniConns     int
+	OmniMode      string
 }
 
 // Route is one entry of the kernel routing table. The panel reads routes to

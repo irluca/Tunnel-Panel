@@ -1306,6 +1306,194 @@ func TestUpdateOfAGreWssTunnelKeepsItsTokenAndPort(t *testing.T) {
 	}
 }
 
+func omniRequest(transport string) Request {
+	req := request()
+	req.TunnelTypeID = model.TunnelTypeOmniTunnel
+	req.OmniTransport = &transport
+	// The port is entered by the operator, like a port-forwarding rule's
+	// bind port: there is no default.
+	port := int64(8443)
+	req.OmniPort = &port
+	return req
+}
+
+// An OmniTunnel tunnel is created the same way as a GRE-over-WSS one, but its
+// unit runs the omnitun binary rather than the panel's own relay: it is
+// Type=simple with Restart=always, its ExecStart carries the shared key so
+// it is written 0600, and verification must confirm the TUN the binary owns
+// is up with the right MTU and addresses — while confirming it reports no
+// tunnel attributes, because the endpoints and keys live in the binary, not
+// the kernel.
+func TestCreateOmniTunnelAppliesVerifiesAndPersists(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+
+	result := h.mustCreate(t, omniRequest("udp"))
+
+	rec := result.Tunnel
+	if rec.InterfaceName != "omnitunnel-a-1" {
+		t.Fatalf("the OmniTunnel tunnel is named %q", rec.InterfaceName)
+	}
+	if rec.OmniTransport == nil || *rec.OmniTransport != "udp" {
+		t.Fatalf("the OmniTunnel transport is %v, want udp", rec.OmniTransport)
+	}
+	if rec.OmniKey == nil || *rec.OmniKey == "" {
+		t.Fatal("no OmniTunnel key was generated for the tunnel")
+	}
+	if len(*rec.OmniKey) != 64 {
+		t.Fatalf("the OmniTunnel key is %d characters, want 64", len(*rec.OmniKey))
+	}
+	if rec.OmniPort == nil || *rec.OmniPort != 8443 {
+		t.Fatalf("the OmniTunnel port is %v, want the entered 8443", rec.OmniPort)
+	}
+
+	unit := persist.UnitName("omnitunnel-a-1")
+	if !persist.Exists(h.unitPath("omnitunnel-a-1")) {
+		t.Fatal("the unit file was not written")
+	}
+	if runtime.GOOS != "windows" {
+		info, err := os.Stat(h.unitPath("omnitunnel-a-1"))
+		if err != nil {
+			t.Fatalf("the unit could not be stat'd: %v", err)
+		}
+		if info.Mode().Perm() != persist.SecretFileMode {
+			t.Fatalf("unit permissions = %v, want %v", info.Mode().Perm(), persist.SecretFileMode)
+		}
+	}
+	if !h.systemd.IsEnabled(unit) || !h.systemd.IsActive(unit) {
+		t.Fatal("the unit was not enabled and started")
+	}
+
+	// The unit is a long-running binary, not a one-shot ip command.
+	unitText, err := os.ReadFile(h.unitPath("omnitunnel-a-1"))
+	if err != nil {
+		t.Fatalf("reading the unit failed: %v", err)
+	}
+	if !strings.Contains(string(unitText), "Type=simple") {
+		t.Fatal("the unit is not Type=simple")
+	}
+	if !strings.Contains(string(unitText), "Restart=always") {
+		t.Fatal("the unit does not restart the binary")
+	}
+	if !strings.Contains(string(unitText), "omnitun udp") {
+		t.Fatalf("the unit does not run omnitun with the udp transport: %s", unitText)
+	}
+	if !strings.Contains(string(unitText), "-T omnitunnel-a-1") {
+		t.Fatal("the unit does not name the TUN after the tunnel")
+	}
+	if !strings.Contains(string(unitText), "-p 8443") {
+		t.Fatal("side A does not serve on the entered port")
+	}
+
+	// The plan's file step carries the secret mode, so a preview shows the
+	// operator what will be written.
+	for _, step := range result.Plan.Steps {
+		if step.Kind == StepFileWrite && step.FileKind == FileSystemdUnit {
+			if step.Mode != persist.SecretFileMode {
+				t.Fatalf("the unit file step has mode %v, want %v", step.Mode, persist.SecretFileMode)
+			}
+		}
+	}
+
+	if !result.Verify.Ok {
+		t.Fatalf("verification failed: %+v", result.Verify.Failures)
+	}
+
+	observed, err := h.links.Get(ctx, "omnitunnel-a-1")
+	if err != nil {
+		t.Fatalf("reading the interface failed: %v", err)
+	}
+	if observed.Kind != link.KindOmniTunnel {
+		t.Fatalf("the interface kind is %q, want %q", observed.Kind, link.KindOmniTunnel)
+	}
+	if observed.Tunnel != nil {
+		t.Fatal("the TUN reports tunnel attributes, which it should not have")
+	}
+	if observed.MTU != 1400 {
+		t.Fatalf("the TUN MTU is %d, want 1400", observed.MTU)
+	}
+	if !slices.Contains(observed.Flags, "UP") {
+		t.Fatalf("the TUN is not up: %v", observed.Flags)
+	}
+}
+
+// An OmniTunnel tunnel without a port is refused: the port is asked from the
+// operator, never defaulted, and the binary cannot listen on a port nobody
+// chose.
+func TestCreateOmniTunnelWithoutAPortIsRefused(t *testing.T) {
+	h := newHarness(t)
+
+	req := omniRequest("tcp")
+	req.OmniPort = nil
+	_, err := h.service.Create(context.Background(), req)
+	if err == nil {
+		t.Fatal("creating an OmniTunnel tunnel without a port succeeded")
+	}
+	if !strings.Contains(err.Error(), "needs a port") {
+		t.Fatalf("the refusal does not say why: %v", err)
+	}
+}
+
+// An icmp tunnel carries no port: one is refused, and the key is refused
+// too — ICMP has neither.
+func TestCreateOmniIcmpTunnelCarriesNoPortOrKey(t *testing.T) {
+	h := newHarness(t)
+
+	req := omniRequest("icmp")
+	req.OmniPort = nil
+	result := h.mustCreate(t, req)
+	if result.Tunnel.OmniKey != nil {
+		t.Fatalf("an icmp tunnel got a key: %v", result.Tunnel.OmniKey)
+	}
+
+	req = omniRequest("icmp")
+	key := strings.Repeat("a", 64)
+	req.OmniKey = &key
+	if _, err := h.service.Create(context.Background(), req); err == nil {
+		t.Fatal("creating an icmp tunnel with a key succeeded")
+	}
+}
+
+// An unrelated edit to an OmniTunnel tunnel must not lose its key, its port,
+// its transport or its parallel-link count: the record carries the secret
+// the peer still holds, and rewriting it to NULL would leave the tunnel
+// unable to authenticate.
+func TestUpdateOfAnOmniTunnelKeepsItsKeyAndPort(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+
+	created := h.mustCreate(t, omniRequest("mux"))
+	key := created.Tunnel.OmniKey
+	port := created.Tunnel.OmniPort
+	transport := created.Tunnel.OmniTransport
+	conns := created.Tunnel.OmniConns
+
+	// An unrelated edit: the merged input carries everything the record
+	// holds, so only the display name changes.
+	update := mergedInput(created.Tunnel)
+	update.DisplayName = "renamed"
+	if _, err := h.service.Update(ctx, created.Tunnel.TunnelID, Request{TunnelInput: update}); err != nil {
+		t.Fatalf("updating the tunnel failed: %v", err)
+	}
+
+	rec, err := h.repo.ByID(ctx, created.Tunnel.TunnelID)
+	if err != nil {
+		t.Fatalf("reading the tunnel failed: %v", err)
+	}
+	if rec.OmniKey == nil || *rec.OmniKey != *key {
+		t.Fatalf("the key changed on an unrelated edit: %v", rec.OmniKey)
+	}
+	if rec.OmniPort == nil || *rec.OmniPort != *port {
+		t.Fatalf("the port changed on an unrelated edit: %v", rec.OmniPort)
+	}
+	if rec.OmniTransport == nil || *rec.OmniTransport != *transport {
+		t.Fatalf("the transport changed on an unrelated edit: %v", rec.OmniTransport)
+	}
+	if rec.OmniConns == nil || *rec.OmniConns != *conns {
+		t.Fatalf("the parallel-link count changed on an unrelated edit: %v", rec.OmniConns)
+	}
+}
+
 // The switch preview says what a switch would change — the new name and the
 // fresh key — without applying anything, and a switch the backend would
 // refuse is refused here too, with the same reason.

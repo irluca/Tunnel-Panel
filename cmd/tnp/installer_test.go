@@ -21,7 +21,7 @@ func TestIsLocalReleaseBase(t *testing.T) {
 
 	remote := []string{
 		DefaultReleaseBase,
-		"https://github.com/DrSaeedHub/Tunnel-Panel/releases/download",
+		"https://github.com/irluca/Tunnel-Panel/releases/download",
 		"https://example.com/mirror/dist/release",
 	}
 	for _, base := range remote {

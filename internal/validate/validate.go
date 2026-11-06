@@ -91,6 +91,7 @@ func validateStatic(ctx context.Context, in TunnelInput, partial bool) *Errors {
 	validateNumbers(ctx, in, errs, partial)
 	validateEsp(ctx, in, errs, partial)
 	validateGreWss(ctx, in, errs, partial)
+	validateOmniTunnel(ctx, in, errs, partial)
 	validateAddressSyntax(ctx, in, errs)
 
 	return errs
@@ -231,6 +232,94 @@ func validateGreWss(ctx context.Context, in TunnelInput, errs *Errors, partial b
 		if in.PersistenceTypeID != model.PersistenceTypeSystemd {
 			errs.Add("persistence_type_id", CodeInvalidPersistence,
 				i18n.T(ctx, "A GRE-over-WSS tunnel needs systemd persistence: only the systemd unit runs the relay that carries it, and restarts it after a reboot."), nil)
+		}
+	}
+}
+
+// validateOmniTunnel applies the rules only an OmniTunnel tunnel has. The
+// transport is one of the five omnitun runs; the key is 64 hex characters
+// (icmp has none); the port is asked from the operator and has no default
+// (icmp has none — ICMP has no port); the parallel-link count is only for
+// mux and ws. Like GRE-over-WSS, an OmniTunnel tunnel needs systemd
+// persistence: only the unit runs the binary that carries it.
+func validateOmniTunnel(ctx context.Context, in TunnelInput, errs *Errors, partial bool) {
+	if in.TunnelTypeID != model.TunnelTypeOmniTunnel {
+		return
+	}
+	if !partial && (in.OmniTransport == nil || strings.TrimSpace(*in.OmniTransport) == "") {
+		errs.Add("omni_transport", CodeInvalidOmniTransport,
+			i18n.T(ctx, "An OmniTunnel tunnel needs a transport: udp, tcp, mux, ws or icmp."), nil)
+		return
+	}
+	transport := ""
+	if in.OmniTransport != nil {
+		transport = strings.TrimSpace(*in.OmniTransport)
+	}
+	if transport != "" && !link.OmniTransportValid(transport) {
+		errs.Add("omni_transport", CodeInvalidOmniTransport,
+			i18n.T(ctx, "An OmniTunnel transport is one of udp, tcp, mux, ws or icmp."), nil)
+		return
+	}
+	if transport == "" {
+		return
+	}
+	if link.OmniTransportNeedsKey(transport) {
+		if in.OmniKey != nil {
+			if err := link.ParseOmniKey(*in.OmniKey); err != nil {
+				errs.Add("omni_key", CodeInvalidOmniKey,
+					i18n.T(ctx, "An OmniTunnel key must be 64 hexadecimal characters."), nil)
+			}
+		}
+	} else if in.OmniKey != nil && strings.TrimSpace(*in.OmniKey) != "" {
+		errs.Add("omni_key", CodeInvalidOmniKey,
+			i18n.T(ctx, "An icmp tunnel carries no key."), nil)
+	}
+	if link.OmniTransportNeedsPort(transport) {
+		if !partial && in.OmniPort == nil {
+			errs.Add("omni_port", CodeInvalidOmniPort,
+				i18n.T(ctx, "An OmniTunnel tunnel needs a port. Enter one."), nil)
+		}
+		if in.OmniPort != nil && (*in.OmniPort < 1 || *in.OmniPort > 65535) {
+			errs.Add("omni_port", CodeInvalidOmniPort,
+				i18n.T(ctx, "An OmniTunnel port is between 1 and 65535."), nil)
+		}
+	} else if in.OmniPort != nil {
+		errs.Add("omni_port", CodeInvalidOmniPort,
+			i18n.T(ctx, "An icmp tunnel carries no port: ICMP has no port."), nil)
+	}
+	if link.OmniTransportHasConns(transport) {
+		if in.OmniConns != nil && (*in.OmniConns < 1 || *in.OmniConns > link.OmniMaxConns) {
+			errs.Add("omni_conns", CodeInvalidOmniConns,
+				i18n.T(ctx, "The parallel-link count is between 1 and 32."), nil)
+		}
+	} else if in.OmniConns != nil {
+		errs.Add("omni_conns", CodeInvalidOmniConns,
+			i18n.T(ctx, "Only mux and ws take a parallel-link count."), nil)
+	}
+	if in.HasInputChecksum || in.HasOutputChecksum || in.HasInputSequence || in.HasOutputSequence {
+		errs.Add("has_input_checksum", CodeInvalidEspField,
+			i18n.T(ctx, "Checksum and sequence options belong to GRE and have no meaning on an OmniTunnel tunnel."), nil)
+	}
+	if in.HopLimit != nil || in.EncapLimit != nil || in.TrafficClass != "" || in.FlowLabel != "" {
+		errs.Add("hop_limit", CodeInvalidEspField,
+			i18n.T(ctx, "Hop limit, encapsulation limit, traffic class and flow label belong to the IPv6 GRE types."), nil)
+	}
+	if in.IsPathMtuDiscovery {
+		errs.Add("is_path_mtu_discovery", CodeInvalidEspField,
+			i18n.T(ctx, "Path-MTU discovery belongs to GRE and has no meaning on an OmniTunnel tunnel."), nil)
+	}
+	if in.IsIgnoreDf {
+		errs.Add("is_ignore_df", CodeInvalidEspField,
+			i18n.T(ctx, "Ignore-df belongs to GRE and has no meaning on an OmniTunnel tunnel."), nil)
+	}
+	if in.FwMark != nil {
+		errs.Add("fwmark", CodeInvalidEspField,
+			i18n.T(ctx, "An OmniTunnel tunnel does not carry a firewall mark."), nil)
+	}
+	if !partial || in.PersistenceTypeID != 0 {
+		if in.PersistenceTypeID != model.PersistenceTypeSystemd {
+			errs.Add("persistence_type_id", CodeInvalidPersistence,
+				i18n.T(ctx, "An OmniTunnel tunnel needs systemd persistence: only the systemd unit runs the binary that carries it, and restarts it after a reboot."), nil)
 		}
 	}
 }

@@ -397,7 +397,13 @@ func tunnelInputOf(rec tunnel.Record) validate.TunnelInput {
 		EspKey: rec.EspKey,
 		// The same, for the WSS token and port.
 		WssToken: rec.WssToken,
-		WssPort:  rec.WssPort,
+		// And the same, for the OmniTunnel transport, key, port and
+		// parallel-link count.
+		OmniTransport: rec.OmniTransport,
+		OmniKey:       rec.OmniKey,
+		OmniPort:      rec.OmniPort,
+		OmniConns:     rec.OmniConns,
+		WssPort:       rec.WssPort,
 
 		HasInputChecksum:  rec.HasInputChecksum,
 		HasOutputChecksum: rec.HasOutputChecksum,
@@ -496,6 +502,10 @@ func (s *Server) pairingPayloadFor(ctx context.Context, rec tunnel.Record) (pair
 		EspKey:          rec.EspKey,
 		WssToken:        rec.WssToken,
 		WssPort:         rec.WssPort,
+		OmniTransport:   rec.OmniTransport,
+		OmniKey:         rec.OmniKey,
+		OmniPort:        rec.OmniPort,
+		OmniConns:       rec.OmniConns,
 
 		HasInputChecksum:  rec.HasInputChecksum,
 		HasOutputChecksum: rec.HasOutputChecksum,

@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -20,8 +21,10 @@ import (
 // DefaultReleaseBase mirrors the installer's own default, and cmd/tnp's copy of
 // it. A test pins the three literals together, because a release base that
 // disagrees with the installer's would have the panel checking one repository
-// and installing from another.
-const DefaultReleaseBase = "https://github.com/DrSaeedHub/Tunnel-Panel/releases/download"
+// and installing from another. This is the fork's own release base, not the
+// upstream's: the fork checks its own releases, because an upstream release
+// does not have the fork's tunnels and installing it would remove them.
+const DefaultReleaseBase = "https://github.com/irluca/Tunnel-Panel/releases/download"
 
 // CLIEnvPath is where the installer records what it installed from. Reading it
 // is how the check follows an installation that came from a fork or a mirror
@@ -50,6 +53,15 @@ type Release struct {
 	URL         string `json:"url,omitempty"`
 	PublishedAt string `json:"published_at,omitempty"`
 	Notes       string `json:"notes,omitempty"`
+	// Checksum is the SHA-256 of this host's binary, as published in the
+	// release's SHA256SUMS, and ChecksumVerified says the release's checksum
+	// file was read and held an entry for this host's binary. A release
+	// whose checksum file is missing or has no entry for this binary is
+	// still a real release, but it is offered unverified: the installer
+	// refuses an unverified binary at apply time, so the operator learns
+	// here rather than at the install.
+	Checksum         string `json:"checksum,omitempty"`
+	ChecksumVerified bool   `json:"checksum_verified"`
 }
 
 // Status is the complete answer to "is there a newer panel", including the
@@ -111,13 +123,14 @@ type CheckerDeps struct {
 // sooner. Nothing here ever blocks a request on the network: a stale cache is
 // refreshed in the background and the caller is told a check is running.
 type Checker struct {
-	current  string
-	apiURL   string
-	source   string
-	client   *http.Client
-	settings Settings
-	log      *slog.Logger
-	now      func() time.Time
+	current     string
+	apiURL      string
+	releaseBase string
+	source      string
+	client      *http.Client
+	settings    Settings
+	log         *slog.Logger
+	now         func() time.Time
 
 	mu      sync.Mutex
 	latest  Release
@@ -155,7 +168,7 @@ func NewChecker(d CheckerDeps) *Checker {
 	}
 
 	return &Checker{
-		current: d.CurrentVersion, apiURL: api, source: repo,
+		current: d.CurrentVersion, apiURL: api, releaseBase: base, source: repo,
 		client: client, settings: d.Settings, log: log, now: now,
 	}
 }
@@ -187,7 +200,7 @@ func isLocalReleaseBase(base string) bool {
 // an endpoint that cannot answer: a mirror serving the binaries over plain HTTP
 // still publishes its releases here.
 func repositoryOf(base string) string {
-	fallback := "DrSaeedHub/Tunnel-Panel"
+	fallback := "irluca/Tunnel-Panel"
 	parsed, err := url.Parse(strings.TrimSpace(base))
 	if err != nil || parsed.Host != "github.com" {
 		return fallback
@@ -397,13 +410,70 @@ func (c *Checker) lookup(ctx context.Context) (Release, error) {
 	if len(notes) > notesLimit {
 		notes = notes[:notesLimit] + "\n…"
 	}
-	return Release{
+	release := Release{
 		Version:     strings.TrimSpace(body.TagName),
 		Name:        strings.TrimSpace(body.Name),
 		URL:         body.HTMLURL,
 		PublishedAt: body.PublishedAt,
 		Notes:       notes,
-	}, nil
+	}
+	// The checksum is what makes an offered update installable: the installer
+	// refuses a binary it cannot verify, so the check reads the release's
+	// checksum file now and says whether this host's binary is in it. A
+	// failure to read the file is not a failure of the check — the version is
+	// real and the answer is still useful — it just means the update is
+	// offered unverified.
+	if sum, ok := c.checksumFor(ctx, release.Version); ok {
+		release.Checksum = sum
+		release.ChecksumVerified = true
+	}
+	return release, nil
+}
+
+// checksumFor reads the release's SHA256SUMS and returns the checksum of this
+// host's panel binary, when the file is there and holds an entry for it. The
+// manifest is what build-release.sh publishes alongside the binaries, one line
+// per file: a 64-hex checksum, whitespace, and the file name.
+func (c *Checker) checksumFor(ctx context.Context, version string) (string, bool) {
+	url := strings.TrimSuffix(c.releaseBase, "/") + "/" + strings.TrimSpace(version) + "/SHA256SUMS"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return "", false
+	}
+	req.Header.Set("User-Agent", "gre-panel/"+c.current)
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return "", false
+	}
+	defer resp.Body.Close() //nolint:errcheck // read-only
+	if resp.StatusCode != http.StatusOK {
+		return "", false
+	}
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return "", false
+	}
+	want := "gre-panel-linux-" + runtime.GOARCH
+	for _, line := range strings.Split(string(raw), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) != 2 {
+			continue
+		}
+		sum, name := fields[0], strings.TrimPrefix(fields[1], "*")
+		if name != want {
+			continue
+		}
+		if len(sum) != 64 {
+			return "", false
+		}
+		for _, r := range sum {
+			if !((r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') || (r >= 'A' && r <= 'F')) {
+				return "", false
+			}
+		}
+		return strings.ToLower(sum), true
+	}
+	return "", false
 }
 
 // snapshot renders the current knowledge as the answer an API caller gets, in

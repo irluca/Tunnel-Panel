@@ -262,6 +262,47 @@ func TestCodeStaysShortEnoughToCopy(t *testing.T) {
 	}
 }
 
+func TestOmniKeyAndPortSurviveTheRoundTrip(t *testing.T) {
+	key := "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff"
+	port := int64(8443)
+	conns := int64(8)
+	transport := "mux"
+	p := samplePayload()
+	p.TunnelTypeID = model.TunnelTypeOmniTunnel
+	p.OmniTransport = &transport
+	p.OmniKey = &key
+	p.OmniPort = &port
+	p.OmniConns = &conns
+
+	code, err := Encode(p)
+	if err != nil {
+		t.Fatalf("encoding failed: %v", err)
+	}
+	decoded, err := Decode(code)
+	if err != nil {
+		t.Fatalf("decoding failed: %v", err)
+	}
+	if decoded.OmniTransport == nil || *decoded.OmniTransport != transport {
+		t.Fatalf("the OmniTunnel transport did not survive: %v", decoded.OmniTransport)
+	}
+	if decoded.OmniKey == nil || *decoded.OmniKey != key {
+		t.Fatalf("the OmniTunnel key did not survive: %v", decoded.OmniKey)
+	}
+	if decoded.OmniPort == nil || *decoded.OmniPort != port {
+		t.Fatalf("the OmniTunnel port did not survive: %v", decoded.OmniPort)
+	}
+	if decoded.OmniConns == nil || *decoded.OmniConns != conns {
+		t.Fatalf("the parallel-link count did not survive: %v", decoded.OmniConns)
+	}
+	in := decoded.Flipped()
+	if in.OmniKey == nil || *in.OmniKey != key {
+		t.Fatalf("the flipped tunnel lost the OmniTunnel key: %v", in.OmniKey)
+	}
+	if in.OmniPort == nil || *in.OmniPort != port {
+		t.Fatalf("the flipped tunnel lost the OmniTunnel port: %v", in.OmniPort)
+	}
+}
+
 func TestWssTokenAndPortSurviveTheRoundTrip(t *testing.T) {
 	token := "00112233445566778899aabbccddeeff"
 	port := int64(8443)

@@ -15,12 +15,12 @@ import (
 // DefaultReleaseBase mirrors the installer's own default. The value the
 // installation was actually created with is recorded in cli.env and wins over
 // this; a test pins the two literals together.
-const DefaultReleaseBase = "https://github.com/DrSaeedHub/Tunnel-Panel/releases/download"
+const DefaultReleaseBase = "https://github.com/irluca/Tunnel-Panel/releases/download"
 
 // DefaultInstallerURL is where a fresh copy of the installer comes from. GitHub
 // serves release assets and repository files from different hosts, so this is
 // not derivable from DefaultReleaseBase.
-const DefaultInstallerURL = "https://raw.githubusercontent.com/DrSaeedHub/Tunnel-Panel/main/scripts/install.sh"
+const DefaultInstallerURL = "https://raw.githubusercontent.com/irluca/Tunnel-Panel/esp-carrier/scripts/install.sh"
 
 // installerConfig is what the installer left behind about itself, so that
 // updating uses the same release base the installation came from rather than a

@@ -10,7 +10,7 @@
 // ---------------------------------------------------------------- lookups
 
 /** Fixed lookup identifiers, spaced by ten (internal/model/lookup.go). */
-export const TunnelType = { GRE: 10, GRETAP: 20, IP6GRE: 30, IP6GRETAP: 40, ESP: 50, GREWSS: 60 } as const
+export const TunnelType = { GRE: 10, GRETAP: 20, IP6GRE: 30, IP6GRETAP: 40, ESP: 50, GREWSS: 60, OmniTunnel: 70 } as const
 export const TunnelSide = { A: 10, B: 20 } as const
 export const PersistenceType = { Systemd: 10, Networkd: 20, Runtime: 30 } as const
 export const MonitorState = {
@@ -84,6 +84,10 @@ export interface UpdateRelease {
   url?: string
   published_at?: string
   notes?: string
+  /** The SHA-256 of this host's binary, as published in the release's SHA256SUMS. */
+  checksum?: string
+  /** Whether the release's checksum file was read and held an entry for this host's binary. */
+  checksum_verified?: boolean
 }
 
 /**
@@ -259,6 +263,9 @@ export interface Tunnel {
   ikey: number | null
   okey: number | null
   wss_port: number | null
+  omni_transport: string | null
+  omni_port: number | null
+  omni_conns: number | null
 
   has_input_checksum: boolean
   has_output_checksum: boolean
@@ -491,6 +498,10 @@ export interface TunnelInput {
   esp_key: string | null
   wss_token: string | null
   wss_port: number | null
+  omni_transport: string | null
+  omni_key: string | null
+  omni_port: number | null
+  omni_conns: number | null
   has_input_checksum: boolean
   has_output_checksum: boolean
   has_input_sequence: boolean

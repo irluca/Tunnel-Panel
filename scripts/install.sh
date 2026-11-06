@@ -53,8 +53,8 @@ readonly RECOMMENDED_PASSWORD_LENGTH=12
 # safe way for --purge-tunnels to decide what is its to remove. Kept identical
 # to persist.OwnershipMarker, which a test asserts.
 readonly PANEL_FILE_MARKER="# gre-panel:managed=1"
-readonly DEFAULT_RELEASE_BASE="https://github.com/DrSaeedHub/Tunnel-Panel/releases/download"
-readonly DEFAULT_INSTALLER_URL="https://raw.githubusercontent.com/DrSaeedHub/Tunnel-Panel/main/scripts/install.sh"
+readonly DEFAULT_RELEASE_BASE="https://github.com/irluca/Tunnel-Panel/releases/download"
+readonly DEFAULT_INSTALLER_URL="https://raw.githubusercontent.com/irluca/Tunnel-Panel/esp-carrier/scripts/install.sh"
 
 # ---------------------------------------------------------------- arguments
 

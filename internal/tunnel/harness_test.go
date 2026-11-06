@@ -209,6 +209,11 @@ func (s *systemdSimulator) interpret(argv []string) error {
 		// the relay configures, and bringing it up — which is exactly what
 		// the relay does when it starts.
 		return s.interpretRelay(ctx, argv)
+	case "omnitun":
+		// The OmniTunnel unit runs the omnitun binary. The simulator models
+		// it the same way: by creating the TUN it owns, with the MTU and
+		// addresses it configures, and bringing it up.
+		return s.interpretOmni(ctx, argv)
 	case "ip":
 	default:
 		return fmt.Errorf("the simulator does not run %q", argv[0])
@@ -519,24 +524,35 @@ func newHarness(t *testing.T) *harness {
 	renderer := persist.NewRenderer(testIPBin, testModprobeBin, testPingBin)
 
 	service := New(Deps{
-		Repo:         repo,
-		Links:        links,
-		Runner:       runner,
-		Renderer:     renderer,
-		Store:        persistStore,
-		Alloc:        alloc.New(repo, links, store),
-		Validator:    validate.New(links, repo.ForValidation(), store, "/api/v1/reconcile/adopt"),
-		Guard:        safety.New(links, systemdDir, networkdDir),
-		Settings:     store,
-		Log:          slog.New(slog.NewTextHandler(io.Discard, nil)),
-		IPBin:        testIPBin,
-		SystemctlBin: testSystemctlBin,
+		Repo:          repo,
+		Links:         links,
+		Runner:        runner,
+		Renderer:      renderer,
+		Store:         persistStore,
+		Alloc:         alloc.New(repo, links, store),
+		Validator:     validate.New(links, repo.ForValidation(), store, "/api/v1/reconcile/adopt"),
+		Guard:         safety.New(links, systemdDir, networkdDir),
+		Settings:      store,
+		Log:           slog.New(slog.NewTextHandler(io.Discard, nil)),
+		BinaryEnsurer: fakeBinaryEnsurer{},
+		IPBin:         testIPBin,
+		SystemctlBin:  testSystemctlBin,
 	})
 
 	return &harness{
 		service: service, repo: repo, links: links, runner: runner,
 		systemd: simulator, store: persistStore, settings: store, dir: dir,
 	}
+}
+
+// fakeBinaryEnsurer stands in for the omnitun binary manager: the binary is
+// already there, so creation never has to download anything. The unit the
+// panel writes still points at the real binary path, which the systemd
+// simulator models by its base name.
+type fakeBinaryEnsurer struct{}
+
+func (fakeBinaryEnsurer) Ensure(ctx context.Context) (string, error) {
+	return "/var/lib/gre-panel/bin/omnitun", nil
 }
 
 // request builds a complete create request against the simulated host.
@@ -639,6 +655,83 @@ func (s *systemdSimulator) interpretRelay(ctx context.Context, argv []string) er
 		}
 	}
 	return s.links.SetUp(ctx, spec.Name)
+}
+
+// interpretOmni models `omnitun <transport> ...` by creating the TUN the
+// binary owns, with the MTU and addresses it configures, and bringing it up.
+// The key, the port, the listen/dial choice and the parallel-link count are
+// the binary's business, not the kernel's, so they are parsed and ignored
+// here — except that a missing key on a transport that needs one is a binary
+// that refuses to start, which the simulator models as a failure.
+func (s *systemdSimulator) interpretOmni(ctx context.Context, argv []string) error {
+	if len(argv) < 2 || !link.OmniTransportValid(argv[1]) {
+		return fmt.Errorf("the simulator does not run %v", argv)
+	}
+	transport := argv[1]
+	var spec link.TunnelSpec
+	spec.Kind = link.KindOmniTunnel
+	spec.OmniTransport = transport
+	var addresses []link.Address
+	key := ""
+	for i := 2; i < len(argv); i++ {
+		switch argv[i] {
+		case "-T":
+			i++
+			spec.Name = argv[i]
+		case "-M":
+			i++
+			mtu, err := strconv.Atoi(argv[i])
+			if err != nil {
+				return err
+			}
+			spec.Mtu = mtu
+		case "-A":
+			i++
+			addr, err := parseOmniAddress(argv[i], transport)
+			if err != nil {
+				return err
+			}
+			addresses = append(addresses, addr)
+		case "-P":
+			i++
+			// The peer address is the other end of the same TUN link; the
+			// simulator only needs the local end to bring the interface up.
+		case "-k":
+			i++
+			key = argv[i]
+		case "-L", "-R", "-p", "-N":
+			i++
+		case "-s", "-v":
+		}
+	}
+	if spec.Name == "" {
+		return fmt.Errorf("omnitun without -T")
+	}
+	if link.OmniTransportNeedsKey(transport) && key == "" {
+		return fmt.Errorf("omnitun %s without a key", transport)
+	}
+	if err := s.links.Create(ctx, spec); err != nil {
+		return err
+	}
+	for _, addr := range addresses {
+		if err := s.links.AddAddress(ctx, spec.Name, addr); err != nil {
+			return err
+		}
+	}
+	return s.links.SetUp(ctx, spec.Name)
+}
+
+// parseOmniAddress parses one -A value: a bare TUN address, for example
+// "172.17.1.1". The real binary rejects a CIDR here — it takes a bare IP —
+// so the prefix is not on the command line. The panel's point-to-point pools
+// are /30, which is what the allocator hands out, so the simulator uses
+// that.
+func parseOmniAddress(s string, transport string) (link.Address, error) {
+	ip := net.ParseIP(s)
+	if ip == nil {
+		return link.Address{}, fmt.Errorf("invalid omnitun address: %s", s)
+	}
+	return link.Address{Address: ip.String(), PrefixLength: 30}, nil
 }
 
 // parseRelayAddress parses one --address value: "10.10.1.1/30", or

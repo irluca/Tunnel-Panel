@@ -668,6 +668,100 @@ export function TunnelFormDialog({
               </>
               ) : null}
 
+              {form.tunnel_type_id === TunnelType.OmniTunnel ? (
+              <>
+              <Field
+                label={t('tunnel.fields.omniTransport')}
+                description={t('tunnel.help.omniTransport')}
+                error={fieldErrors['omni_transport']}
+                required
+              >
+                {(props) => (
+                  <Select
+                    id={props.id}
+                    value={form.omni_transport ?? ''}
+                    onValueChange={(value) => set('omni_transport', value === '' ? null : value)}
+                    options={[
+                      { value: 'udp', label: 'udp' },
+                      { value: 'tcp', label: 'tcp' },
+                      { value: 'mux', label: 'mux' },
+                      { value: 'ws', label: 'ws' },
+                      { value: 'icmp', label: 'icmp' },
+                    ]}
+                  />
+                )}
+              </Field>
+              {form.omni_transport !== 'icmp' ? (
+              <Field
+                label={t('tunnel.fields.omniKey')}
+                description={t('tunnel.help.omniKey')}
+                error={fieldErrors['omni_key']}
+              >
+                {(props) => (
+                  <div className="flex items-center gap-2">
+                    <TechnicalInput
+                      {...props}
+                      className="flex-1"
+                      value={form.omni_key ?? ''}
+                      onChange={(event) => set('omni_key', event.target.value === '' ? null : event.target.value)}
+                      placeholder="00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff"
+                    />
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      size="icon"
+                      aria-label={t('tunnelForm.randomKey')}
+                      title={t('tunnelForm.randomKey')}
+                      onClick={() => set('omni_key', randomOmniKey())}
+                    >
+                      <Dices className="size-4" aria-hidden="true" />
+                    </Button>
+                  </div>
+                )}
+              </Field>
+              ) : null}
+              {form.omni_transport !== 'icmp' ? (
+              <Field
+                label={t('tunnel.fields.omniPort')}
+                description={t('tunnel.help.omniPort')}
+                error={fieldErrors['omni_port']}
+                required
+              >
+                {(props) => (
+                  <TechnicalInput
+                    {...props}
+                    type="number"
+                    min={1}
+                    max={65535}
+                    value={form.omni_port ?? ''}
+                    onChange={(event) => set('omni_port', event.target.value === '' ? null : Number(event.target.value))}
+                    placeholder={t('tunnel.help.omniPortPlaceholder')}
+                  />
+                )}
+              </Field>
+              ) : null}
+              {(form.omni_transport === 'mux' || form.omni_transport === 'ws') ? (
+              <Field
+                label={t('tunnel.fields.omniConns')}
+                description={t('tunnel.help.omniConns')}
+                error={fieldErrors['omni_conns']}
+              >
+                {(props) => (
+                  <TechnicalInput
+                    {...props}
+                    type="number"
+                    min={1}
+                    max={32}
+                    value={form.omni_conns ?? ''}
+                    onChange={(event) => set('omni_conns', event.target.value === '' ? null : Number(event.target.value))}
+                    placeholder="8"
+                  />
+                )}
+              </Field>
+              ) : null}
+              </>
+              ) : null}
+
               <MtuField
                 value={form.mtu}
                 onChange={(value) => set('mtu', value)}
@@ -1546,6 +1640,10 @@ function defaultsFrom(settings: Record<string, unknown>, used?: Set<number>): Fo
     esp_key: null,
     wss_token: null,
     wss_port: null,
+    omni_transport: null,
+    omni_key: null,
+    omni_port: null,
+    omni_conns: null,
     has_input_checksum: boolean('tunnel.default_csum', false),
     has_output_checksum: boolean('tunnel.default_csum', false),
     has_input_sequence: boolean('tunnel.default_seq', false),
@@ -1586,6 +1684,13 @@ function formFromTunnel(tunnel: Tunnel): FormState {
     // the stored one unless the operator changes it.
     wss_token: null,
     wss_port: tunnel.wss_port,
+    // And the same, for the OmniTunnel key: the transport, port and
+    // parallel-link count are returned, so editing keeps the stored ones
+    // unless the operator changes them.
+    omni_transport: tunnel.omni_transport,
+    omni_key: null,
+    omni_port: tunnel.omni_port,
+    omni_conns: tunnel.omni_conns,
     has_input_checksum: tunnel.has_input_checksum,
     has_output_checksum: tunnel.has_output_checksum,
     has_input_sequence: tunnel.has_input_sequence,
@@ -1658,6 +1763,14 @@ export function toPatch(form: FormState, manual: boolean): Record<string, unknow
   // handled by the form, which carries the stored value.
   if (form.wss_token) patch.wss_token = form.wss_token
   if (form.wss_port !== null) patch.wss_port = form.wss_port
+
+  // The OmniTunnel key follows the same rule. The transport, port and
+  // parallel-link count are always sent when set: the form carries the
+  // stored values, so editing keeps them unless the operator changes them.
+  if (form.omni_transport) patch.omni_transport = form.omni_transport
+  if (form.omni_key) patch.omni_key = form.omni_key
+  if (form.omni_port !== null) patch.omni_port = form.omni_port
+  if (form.omni_conns !== null) patch.omni_conns = form.omni_conns
 
   if (form.interface_name) patch.interface_name = form.interface_name
   if (form.bind_device) patch.bind_device = form.bind_device
@@ -1736,6 +1849,17 @@ export function randomEspKey(): string {
  */
 export function randomWssToken(): string {
   const buffer = new Uint8Array(16)
+  crypto.getRandomValues(buffer)
+  return Array.from(buffer, (byte) => byte.toString(16).padStart(2, '0')).join('')
+}
+
+/**
+ * A fresh OmniTunnel key: 32 random bytes as 64 hex characters. It comes from
+ * the platform's own generator, like the ESP key above, because there is no
+ * reason for it not to.
+ */
+export function randomOmniKey(): string {
+  const buffer = new Uint8Array(32)
   crypto.getRandomValues(buffer)
   return Array.from(buffer, (byte) => byte.toString(16).padStart(2, '0')).join('')
 }

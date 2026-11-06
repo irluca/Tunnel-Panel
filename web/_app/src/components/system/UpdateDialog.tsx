@@ -185,6 +185,23 @@ function OfferBody() {
 
       <p className="text-sm text-muted-foreground">{t('update.dialog.whatHappens')}</p>
 
+      {/* Whether the offered update's checksum was verified. An unverified
+          update is still offered — the version is real — but the installer
+          refuses an unverified binary, so the operator learns it here. */}
+      <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+        {status.latest.checksum_verified ? (
+          <>
+            <CheckCircle2 className="size-3.5 text-success" aria-hidden="true" />
+            {t('update.checksumVerified')}
+          </>
+        ) : (
+          <>
+            <AlertTriangle className="size-3.5 text-warning" aria-hidden="true" />
+            {t('update.checksumUnverified')}
+          </>
+        )}
+      </p>
+
       {status.latest.notes ? (
         <div className="space-y-1">
           <p className="text-xs font-medium">{t('update.notes')}</p>

@@ -99,6 +99,16 @@ type Tunnel struct {
 	// it. It is generated on creation when the operator does not give one.
 	WssToken *string `json:"-"`
 
+	// OmniTunnel tunnels only. OmniTransport is one of udp, tcp, mux, ws or
+	// icmp; OmniKey is the 64-hex pre-shared key (icmp has none); OmniPort
+	// is the port the listening side serves on (icmp has none — it is asked
+	// from the operator, never defaulted); OmniConns is the parallel-link
+	// count for mux and ws. The key is a credential and is never serialised.
+	OmniTransport *string `json:"omni_transport,omitempty"`
+	OmniKey       *string `json:"-"`
+	OmniPort      *int64  `json:"omni_port,omitempty"`
+	OmniConns     *int64  `json:"omni_conns,omitempty"`
+
 	// WssPort is the TCP port a GRE-over-WSS tunnel serves on (side A) and
 	// dials (side B). NULL means the default, 443.
 	WssPort *int64 `json:"wss_port,omitempty"`

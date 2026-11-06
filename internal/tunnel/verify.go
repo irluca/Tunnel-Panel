@@ -109,8 +109,11 @@ func (s *Service) Verify(ctx context.Context, rec Record) VerifyReport {
 
 	// 1. The type matches what was requested. The detail is written for the
 	// case it is in: phrasing a passing check as a mismatch made the report
-	// read as though something were wrong when nothing was.
-	typeMatches := observed.Kind == desiredSpec.Kind
+	// read as though something were wrong when nothing was. A TUN interface
+	// read back from the kernel is the same thing whether the relay is the
+	// GRE-over-WSS one or omnitun, so both TUN-relay kinds match each other.
+	typeMatches := observed.Kind == desiredSpec.Kind ||
+		(link.IsTunRelayKind(observed.Kind) && link.IsTunRelayKind(desiredSpec.Kind))
 	typeDetail := i18n.T(ctx, "the interface %s is of type %s, as requested",
 		rec.InterfaceName, observed.Kind)
 	if !typeMatches {
@@ -222,9 +225,9 @@ func mismatchClause(ctx context.Context, param int, actual, expected string) str
 func parameterChecks(ctx context.Context, desired link.TunnelSpec, observed link.Link) []VerifyCheck {
 	actual := observed.Tunnel
 	// A TUN interface has no tunnel attributes in the kernel: the endpoints,
-	// keys and token live in the relay. For a GRE-over-WSS tunnel that is
+	// keys and token live in the relay. For a TUN-relay tunnel that is
 	// expected, and only the MTU is compared below.
-	if actual == nil && desired.Kind != link.KindGREWSS {
+	if actual == nil && !link.IsTunRelayKind(desired.Kind) {
 		return []VerifyCheck{{
 			Name: CheckParameters, Fatal: true,
 			Detail:   i18n.T(ctx, "the interface exists but reports no tunnel attributes at all"),
@@ -256,7 +259,7 @@ func parameterChecks(ctx context.Context, desired link.TunnelSpec, observed link
 	// own check below. These two kinds are handled before the full list is
 	// built, because building it reads the tunnel attributes — which a TUN
 	// does not have.
-	if desired.Kind == link.KindESP || desired.Kind == link.KindGREWSS {
+	if desired.Kind == link.KindESP || link.IsTunRelayKind(desired.Kind) {
 		comparisons := []paramComparison{
 			{paramMtu, itoa(int64(desired.Mtu)), itoa(int64(observed.MTU))},
 		}

@@ -3,7 +3,9 @@ package reconcile
 import (
 	"context"
 	"net/netip"
+	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/drs/gre-panel/internal/i18n"
@@ -60,7 +62,12 @@ const (
 	// the panel generates a fresh token and the far end must be given it
 	// before the tunnel carries anything again.
 	WarnWssTokenRegenerated = "WSS_TOKEN_REGENERATED"
-	WarnUnitNotActive       = "ADOPTED_UNIT_NOT_ACTIVE"
+	// WarnOmniKeyRegenerated is raised when an OmniTunnel tunnel is adopted:
+	// the key lives in the binary's memory, not in the kernel, so the panel
+	// generates a fresh key and the far end must be given it before the
+	// tunnel carries anything again.
+	WarnOmniKeyRegenerated = "OMNI_KEY_REGENERATED"
+	WarnUnitNotActive      = "ADOPTED_UNIT_NOT_ACTIVE"
 )
 
 // Adopt imports an existing tunnel into the panel (§12).
@@ -304,6 +311,40 @@ func (s *Service) importFrom(ctx context.Context, observed link.Link, req AdoptR
 		}
 		in.WssToken = &token
 	}
+	// An OmniTunnel tunnel's key lives in the binary's memory, not in the
+	// kernel, so the adopted tunnel gets a fresh key the same way, and the
+	// far end must be re-paired with it. The transport and the endpoints
+	// are not readable from the kernel either — a TUN reports neither — so
+	// they are recovered from the panel-owned unit file, which carries the
+	// exact omnitun command line. Without a panel-owned unit they stay
+	// empty and validation refuses the adoption honestly, rather than
+	// adopting a tunnel with endpoints nobody knows.
+	if observed.Kind == link.KindOmniTunnel {
+		warnings = append(warnings, validate.Warning{
+			Code:  WarnOmniKeyRegenerated,
+			Field: "omni_key",
+			Message: i18n.T(ctx, "The OmniTunnel key cannot be read from the kernel, so this tunnel gets a fresh "+
+				"one. Give the far end the new key before it can carry traffic again."),
+		})
+		key, err := link.GenerateOmniKey()
+		if err != nil {
+			return validate.TunnelInput{}, nil, err
+		}
+		in.OmniKey = &key
+		if transport, local, remote, port, conns, ok := readOmniUnit(s.Store.UnitPath(observed.Name)); ok {
+			in.OmniTransport = &transport
+			in.LocalEndpoint = local
+			in.RemoteEndpoint = remote
+			if port != 0 {
+				p := int64(port)
+				in.OmniPort = &p
+			}
+			if conns != 0 {
+				c := int64(conns)
+				in.OmniConns = &c
+			}
+		}
+	}
 	for _, addr := range observed.Addresses {
 		if addr.Scope == "link" {
 			continue // the kernel's own link-local address, not configuration
@@ -453,4 +494,93 @@ func (s *Service) takeOverUnits(ctx context.Context, name string, id int64, isLe
 		return taken, backups, err
 	}
 	return taken, backups, nil
+}
+
+// readOmniUnit recovers an OmniTunnel tunnel's transport, endpoints, port and
+// parallel-link count from a panel-owned unit file's ExecStart line. The
+// kernel reports none of these for a TUN interface, but the unit carries the
+// exact omnitun command line the panel wrote. Only the panel's own units are
+// parsed: a hand-written unit's format is not the panel's to assume. The key
+// is deliberately not read — adoption generates a fresh one, and the far end
+// must be re-paired with it.
+func readOmniUnit(path string) (transport, local, remote string, port, conns int, ok bool) {
+	owned, err := persist.IsPanelOwned(path)
+	if err != nil || !owned {
+		return "", "", "", 0, 0, false
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return "", "", "", 0, 0, false
+	}
+	for _, line := range strings.Split(string(raw), "\n") {
+		if !strings.HasPrefix(line, "ExecStart=") {
+			continue
+		}
+		argv := splitUnitCommand(strings.TrimPrefix(line, "ExecStart="))
+		if len(argv) < 2 || filepath.Base(argv[0]) != "omnitun" {
+			return "", "", "", 0, 0, false
+		}
+		if !link.OmniTransportValid(argv[1]) {
+			return "", "", "", 0, 0, false
+		}
+		transport = argv[1]
+		for i := 2; i < len(argv); i++ {
+			switch argv[i] {
+			case "-L":
+				if i+1 < len(argv) {
+					local = argv[i+1]
+					i++
+				}
+			case "-R":
+				if i+1 < len(argv) {
+					remote = argv[i+1]
+					i++
+				}
+			case "-p":
+				if i+1 < len(argv) {
+					port, _ = strconv.Atoi(argv[i+1])
+					i++
+				}
+			case "-N":
+				if i+1 < len(argv) {
+					conns, _ = strconv.Atoi(argv[i+1])
+					i++
+				}
+			}
+		}
+		if local == "" || remote == "" {
+			return "", "", "", 0, 0, false
+		}
+		return transport, local, remote, port, conns, true
+	}
+	return "", "", "", 0, 0, false
+}
+
+// splitUnitCommand splits a systemd ExecStart line into arguments, honouring
+// the double quotes the panel's renderer writes around arguments that
+// contain spaces. An omnitun command line has no such arguments, but the
+// split is shared with any unit the panel writes.
+func splitUnitCommand(s string) []string {
+	var argv []string
+	var cur strings.Builder
+	var quoted bool
+	for _, r := range s {
+		switch {
+		case r == '"':
+			quoted = !quoted
+		case r == ' ' || r == '\t':
+			if quoted {
+				cur.WriteRune(r)
+			} else if cur.Len() > 0 {
+				argv = append(argv, cur.String())
+				cur.Reset()
+			}
+		default:
+			cur.WriteRune(r)
+		}
+	}
+	if cur.Len() > 0 {
+		argv = append(argv, cur.String())
+	}
+	return argv
 }

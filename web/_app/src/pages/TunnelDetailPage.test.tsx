@@ -115,6 +115,17 @@ beforeEach(() => {
     if (path.startsWith('/settings')) return { settings: {} } as never
     if (path.startsWith('/routes')) return { routes: [], total: 0 } as never
     if (path.startsWith('/diagnostics')) return { runs: [], total: 0 } as never
+    if (path.startsWith('/tunnels/3/counters')) {
+      return {
+        interface_name: 'gre-a-1',
+        counters: { rx_bytes: 0, tx_bytes: 0, rx_packets: 0, tx_packets: 0, rx_errors: 0, tx_errors: 0, rx_dropped: 0, tx_dropped: 0 },
+        deltas: { rx_bytes: 0, tx_bytes: 0, rx_packets: 0, tx_packets: 0, rx_errors: 0, tx_errors: 0, rx_dropped: 0, tx_dropped: 0 },
+        rx_bytes_per_second: 0,
+        tx_bytes_per_second: 0,
+        interval_seconds: 1,
+        sampled_at: '2026-11-06T00:00:00Z',
+      } as never
+    }
     return {} as never
   })
 })
@@ -131,8 +142,10 @@ describe('TunnelDetailPage', () => {
   it('does not title the monitoring card with a state the tunnel is not in', async () => {
     mountAt('overview')
 
-    // The statistics are on screen, so the card really did render.
-    expect(await screen.findByText('Sent')).toBeTruthy()
+    // The statistics are on screen, so the card really did render. "Sent"
+    // appears twice now — once in the monitoring card and once in the
+    // traffic card — so the assertion is about there being at least one.
+    expect((await screen.findAllByText('Sent')).length).toBeGreaterThanOrEqual(1)
     // 58 sent and 58 lost, so there are two of them.
     expect(screen.getAllByText('58').length).toBe(2)
     expect(screen.getByText('100%')).toBeTruthy()

@@ -23,6 +23,11 @@ const (
 	// packets are the same GRE packets with the same keys; the relay moves
 	// them over TLS, and each end feeds them to a TUN interface.
 	TunnelTypeGREWSS int64 = 60
+	// TunnelTypeOmniTunnel is an OmniTunnel tunnel: one of the omnitun core
+	// transports (udp, tcp, mux, ws or icmp), run by the omnitun binary as a
+	// userspace relay feeding a TUN interface. It is for paths where GRE and
+	// ESP are filtered and a plain WebSocket is not enough.
+	TunnelTypeOmniTunnel int64 = 70
 )
 
 // TunnelSide identifiers. A and B are the two ends of one tunnel; neither has a
@@ -239,12 +244,13 @@ const (
 // shared through an import, which would make this package depend on the system
 // interaction layer.
 var tunnelTypeKinds = map[int64]string{
-	TunnelTypeGRE:       "gre",
-	TunnelTypeGRETAP:    "gretap",
-	TunnelTypeIP6GRE:    "ip6gre",
-	TunnelTypeIP6GRETAP: "ip6gretap",
-	TunnelTypeESP:       "esp",
-	TunnelTypeGREWSS:    "gre-wss",
+	TunnelTypeGRE:        "gre",
+	TunnelTypeGRETAP:     "gretap",
+	TunnelTypeIP6GRE:     "ip6gre",
+	TunnelTypeIP6GRETAP:  "ip6gretap",
+	TunnelTypeESP:        "esp",
+	TunnelTypeGREWSS:     "gre-wss",
+	TunnelTypeOmniTunnel: "omnitunnel",
 }
 
 // TunnelTypeKind returns the kernel's name for a tunnel type, or "" when the
@@ -377,6 +383,7 @@ func LookupTables() []LookupTable {
 			{TunnelTypeIP6GRETAP, "IP6GRETAP"},
 			{TunnelTypeESP, "ESP"},
 			{TunnelTypeGREWSS, "GRE over WSS"},
+			{TunnelTypeOmniTunnel, "OmniTunnel"},
 		}},
 		{Name: "TunnelSide", Values: []LookupValue{
 			{TunnelSideA, "A"},

@@ -39,6 +39,7 @@ import (
 	"github.com/drs/gre-panel/internal/metrics"
 	"github.com/drs/gre-panel/internal/monitor"
 	"github.com/drs/gre-panel/internal/notify"
+	"github.com/drs/gre-panel/internal/omnitunnel"
 	"github.com/drs/gre-panel/internal/persist"
 	"github.com/drs/gre-panel/internal/quota"
 	"github.com/drs/gre-panel/internal/reconcile"
@@ -231,7 +232,7 @@ func run() error {
 	runner := exec.NewRunner()
 	links := link.Select(link.Options{IPBin: cfg.IPBin, Runner: runner, DevMode: cfg.DevMode})
 	renderer := persist.NewRenderer(cfg.IPBin, lookupBinary("modprobe", persist.DefaultModprobeBin),
-		lookupBinary("ping", persist.DefaultPingBin)).WithPanelBin(selfBinary())
+		lookupBinary("ping", persist.DefaultPingBin)).WithPanelBin(selfBinary()).WithOmniBin(omnitunnel.BinaryPath(cfg.DataDir))
 	persistStore := persist.NewStore(cfg.SystemdDir, cfg.NetworkdDir, cfg.SystemctlBin, runner)
 
 	// The netfilter backend for the port forwarding subsystem, chosen once at
@@ -280,6 +281,7 @@ func run() error {
 		Guard:         safety.New(links, cfg.SystemdDir, cfg.NetworkdDir),
 		Settings:      store,
 		Log:           log,
+		BinaryEnsurer: omnitunnel.New(cfg.DataDir, log),
 		IPBin:         cfg.IPBin,
 		SystemctlBin:  cfg.SystemctlBin,
 		NetworkctlBin: lookupBinary("networkctl", ""),

@@ -67,6 +67,18 @@ type Deps struct {
 	// has to queue behind the same lock. A nil value gets a private one, which
 	// is what a test that exercises tunnels alone wants.
 	Mutation *lock.Mutation
+	// BinaryEnsurer downloads and verifies the omnitun binary. It is
+	// optional: without it an OmniTunnel tunnel cannot be created, because
+	// the binary it runs has to exist and match its pinned checksum first.
+	// A test that exercises tunnels alone leaves it nil and never creates
+	// an OmniTunnel tunnel.
+	BinaryEnsurer BinaryEnsurer
+}
+
+// BinaryEnsurer is what the service needs from the omnitun binary manager:
+// the path to a verified binary, downloading it when it is missing.
+type BinaryEnsurer interface {
+	Ensure(ctx context.Context) (string, error)
 }
 
 // Service carries out tunnel operations.
@@ -86,6 +98,9 @@ type Service struct {
 	// mutation is the global mutation lock of §16, shared with every other
 	// subsystem that changes kernel state.
 	mutation *lock.Mutation
+
+	// binaryEnsurer downloads and verifies the omnitun binary.
+	binaryEnsurer BinaryEnsurer
 
 	idempotency *idempotencyCache
 
@@ -112,19 +127,20 @@ func New(d Deps) *Service {
 		mutation = lock.New()
 	}
 	s := &Service{
-		repo:      d.Repo,
-		links:     d.Links,
-		runner:    d.Runner,
-		renderer:  d.Renderer,
-		store:     d.Store,
-		alloc:     d.Alloc,
-		validator: d.Validator,
-		guard:     d.Guard,
-		settings:  d.Settings,
-		log:       log,
-		observer:  nil,
-		prober:    d.PeerProber,
-		mutation:  mutation,
+		repo:          d.Repo,
+		links:         d.Links,
+		runner:        d.Runner,
+		renderer:      d.Renderer,
+		store:         d.Store,
+		alloc:         d.Alloc,
+		validator:     d.Validator,
+		guard:         d.Guard,
+		settings:      d.Settings,
+		log:           log,
+		observer:      nil,
+		prober:        d.PeerProber,
+		mutation:      mutation,
+		binaryEnsurer: d.BinaryEnsurer,
 		planner: &planner{
 			renderer:      d.Renderer,
 			store:         d.Store,
@@ -340,9 +356,12 @@ func (s *Service) ApplyDefaults(ctx context.Context, in *validate.TunnelInput) e
 		// underlay that is not quite 1500 without fragmenting. A
 		// GRE-over-WSS tunnel takes the same default: the GRE header plus
 		// the TCP, TLS and WebSocket framing of its underlay cost about the
-		// same.
+		// same. An OmniTunnel tunnel takes 1400, the value OmniTunnel's own
+		// manager passes.
 		if in.TunnelTypeID == model.TunnelTypeESP || in.TunnelTypeID == model.TunnelTypeGREWSS {
 			in.Mtu = validate.EspDefaultMtu
+		} else if in.TunnelTypeID == model.TunnelTypeOmniTunnel {
+			in.Mtu = link.OmniDefaultMtu
 		} else {
 			in.Mtu = s.settings.Int("tunnel.default_mtu")
 		}
@@ -392,6 +411,31 @@ func (s *Service) ApplyDefaults(ctx context.Context, in *validate.TunnelInput) e
 				return err
 			}
 			in.WssToken = &token
+		}
+	}
+
+	// An OmniTunnel tunnel's key is generated the same way, and its
+	// parallel-link count defaults to 8 for mux and ws. Its port is not
+	// defaulted: the operator enters it, the way the port-forwarding section
+	// asks for a port rather than assuming one. All are creation-only: on an
+	// update the stored values stand unless the operator supplies new ones.
+	if in.TunnelID == 0 && in.TunnelTypeID == model.TunnelTypeOmniTunnel {
+		transport := ""
+		if in.OmniTransport != nil {
+			transport = strings.TrimSpace(*in.OmniTransport)
+		}
+		if link.OmniTransportNeedsKey(transport) {
+			if in.OmniKey == nil || strings.TrimSpace(*in.OmniKey) == "" {
+				key, err := link.GenerateOmniKey()
+				if err != nil {
+					return err
+				}
+				in.OmniKey = &key
+			}
+		}
+		if link.OmniTransportHasConns(transport) && in.OmniConns == nil {
+			conns := int64(link.OmniDefaultConns)
+			in.OmniConns = &conns
 		}
 	}
 
@@ -763,6 +807,15 @@ func (s *Service) Create(ctx context.Context, req Request) (Result, error) {
 		return Result{}, err
 	}
 
+	// An OmniTunnel tunnel runs a binary the panel installs itself. It has
+	// to exist and match its pinned checksum before the unit is written,
+	// because the unit's ExecStart points at it.
+	if rec.TunnelTypeID == model.TunnelTypeOmniTunnel {
+		if _, err := s.ensureOmniBinary(ctx); err != nil {
+			return Result{}, err
+		}
+	}
+
 	plan := s.planner.PlanCreate(ctx, rec, s.KeepaliveFor(rec, req.KeepaliveEnabled), false)
 	plan.Warnings = validation.Warnings
 
@@ -776,6 +829,17 @@ func (s *Service) Create(ctx context.Context, req Request) (Result, error) {
 	s.idempotency.put(req.IdempotencyKey, result)
 	s.notifyChanged()
 	return result, nil
+}
+
+// ensureOmniBinary returns the path to a verified omnitun binary, downloading
+// it when it is missing. Without an ensurer the panel cannot install one, so
+// creating an OmniTunnel tunnel is refused rather than writing a unit that
+// points at a binary that is not there.
+func (s *Service) ensureOmniBinary(ctx context.Context) (string, error) {
+	if s.binaryEnsurer == nil {
+		return "", i18n.Errorf(ctx, "the omnitun binary cannot be installed on this panel: no binary manager is configured")
+	}
+	return s.binaryEnsurer.Ensure(ctx)
 }
 
 // ---------------------------------------------------------------- update
@@ -833,6 +897,14 @@ func (s *Service) Update(ctx context.Context, id int64, req Request) (Result, er
 
 	trace := audit.NewTrace()
 	ctx = audit.WithTrace(ctx, trace)
+
+	// An OmniTunnel tunnel runs a binary the panel installs itself. It has
+	// to exist and match its pinned checksum before the unit is written.
+	if desired.TunnelTypeID == model.TunnelTypeOmniTunnel {
+		if _, err := s.ensureOmniBinary(ctx); err != nil {
+			return Result{}, err
+		}
+	}
 
 	plan := s.planner.PlanUpdate(ctx, current, desired, s.KeepaliveFor(desired, req.KeepaliveEnabled), diffs, req.Takeover)
 	plan.Warnings = validation.Warnings
@@ -927,6 +999,12 @@ func mergedInput(rec Record) validate.TunnelInput {
 		// The same, for the WSS token and port.
 		WssToken: rec.WssToken,
 		WssPort:  rec.WssPort,
+		// And the same, for the OmniTunnel transport, key, port and
+		// parallel-link count.
+		OmniTransport: rec.OmniTransport,
+		OmniKey:       rec.OmniKey,
+		OmniPort:      rec.OmniPort,
+		OmniConns:     rec.OmniConns,
 
 		HasInputChecksum:  rec.HasInputChecksum,
 		HasOutputChecksum: rec.HasOutputChecksum,
