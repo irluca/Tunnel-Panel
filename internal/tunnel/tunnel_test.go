@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -246,6 +247,115 @@ func TestVerificationCatchesAUnitThatDidNotDoWhatItSaid(t *testing.T) {
 		t.Fatal("the rollback left the interface behind")
 	}
 	if persist.Exists(h.unitPath("gre-a-1")) {
+		t.Fatal("the rollback left the unit file behind")
+	}
+}
+
+// ---------------------------------------------------------------- ESP
+
+func espRequest() Request {
+	req := request()
+	req.TunnelTypeID = model.TunnelTypeESP
+	return req
+}
+
+// An ESP tunnel is created the same way as a GRE one, but its unit file
+// carries the shared secret, so it is written 0600, and verification must
+// confirm the security associations and policies are really in the kernel.
+func TestCreateESPAppliesVerifiesAndPersists(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+
+	result := h.mustCreate(t, espRequest())
+
+	rec := result.Tunnel
+	if rec.InterfaceName != "esp-a-1" {
+		t.Fatalf("the ESP tunnel is named %q", rec.InterfaceName)
+	}
+	if rec.EspKey == nil || *rec.EspKey == "" {
+		t.Fatal("no ESP key was generated for the tunnel")
+	}
+
+	// The unit file exists, is panel-owned, enabled and active — and is
+	// readable only by root, because its ExecStart lines carry the key.
+	unit := persist.UnitName("esp-a-1")
+	if !persist.Exists(h.unitPath("esp-a-1")) {
+		t.Fatal("the unit file was not written")
+	}
+	if runtime.GOOS != "windows" {
+		info, err := os.Stat(h.unitPath("esp-a-1"))
+		if err != nil {
+			t.Fatalf("the unit could not be stat'd: %v", err)
+		}
+		if info.Mode().Perm() != persist.SecretFileMode {
+			t.Fatalf("unit permissions = %v, want %v", info.Mode().Perm(), persist.SecretFileMode)
+		}
+	}
+	if !h.systemd.IsEnabled(unit) || !h.systemd.IsActive(unit) {
+		t.Fatal("the unit was not enabled and started")
+	}
+
+	// The plan's file step carries the secret mode, so a preview shows the
+	// operator what will be written.
+	for _, step := range result.Plan.Steps {
+		if step.Kind == StepFileWrite && step.FileKind == FileSystemdUnit {
+			if step.Mode != persist.SecretFileMode {
+				t.Fatalf("the unit file step has mode %v, want %v", step.Mode, persist.SecretFileMode)
+			}
+		}
+	}
+
+	if !result.Verify.Ok {
+		t.Fatalf("verification failed: %+v", result.Verify.Failures)
+	}
+	var associations VerifyCheck
+	for _, check := range result.Verify.Checks {
+		if check.Name == CheckEspAssociations {
+			associations = check
+		}
+	}
+	if !associations.Ok {
+		t.Fatalf("the ESP association check failed: %+v", associations)
+	}
+
+	observed, err := h.links.Get(ctx, "esp-a-1")
+	if err != nil {
+		t.Fatalf("reading the interface failed: %v", err)
+	}
+	if observed.Tunnel == nil || observed.Tunnel.Esp == nil {
+		t.Fatal("the interface reports no ESP associations at all")
+	}
+	if len(observed.Tunnel.Esp.SPIs) != 2 || !observed.Tunnel.Esp.PoliciesPresent {
+		t.Fatalf("the associations are incomplete: %+v", observed.Tunnel.Esp)
+	}
+}
+
+// A unit that starts but never creates the security associations must be
+// caught by verification: an xfrm interface with no associations carries no
+// traffic, and reporting it as a tunnel would be the zombie state.
+func TestVerificationCatchesAnESPUnitWithoutAssociations(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+
+	// The unit starts and systemd reports it active, but the commands that
+	// create the associations quietly do nothing.
+	h.systemd.SkipCommands = []string{"xfrm state add", "xfrm policy add"}
+
+	_, err := h.service.Create(ctx, espRequest())
+	if err == nil {
+		t.Fatal("an ESP tunnel with no associations was reported as created")
+	}
+	var applyErr *ApplyError
+	if !errors.As(err, &applyErr) {
+		t.Fatalf("error = %v (%T), want an ApplyError", err, err)
+	}
+	if !strings.Contains(applyErr.Cause, "associations") {
+		t.Fatalf("the failure should name the missing associations: %q", applyErr.Cause)
+	}
+	if _, err := h.links.Get(ctx, "esp-a-1"); !errors.Is(err, link.ErrNotFound) {
+		t.Fatal("the rollback left the interface behind")
+	}
+	if persist.Exists(h.unitPath("esp-a-1")) {
 		t.Fatal("the rollback left the unit file behind")
 	}
 }

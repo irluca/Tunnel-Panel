@@ -222,7 +222,11 @@ var definitions = []Definition{
 		Description: i18n.N("Template for generated interface names. Supports {side}, {number}, {type} " +
 			"and free text. The rendered name must satisfy the Linux interface name rules: " +
 			"at most 15 characters from A-Z a-z 0-9 . _ - starting with a letter or digit."),
-		Default:     "gre-{side}-{number}",
+		// {type} is part of the default so a tunnel's name says what it is:
+		// with the old "gre-..." default an ESP tunnel would be named gre-a-1.
+		// GRE tunnels still render "gre-a-1", so nothing already created
+		// changes.
+		Default:     "{type}-{side}-{number}",
 		Constraints: Constraints{Pattern: `rendered name must match ^[A-Za-z0-9][A-Za-z0-9_.-]{0,14}$`},
 		validate: func(ctx context.Context, v any) error {
 			s, _ := v.(string)

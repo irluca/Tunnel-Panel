@@ -22,6 +22,11 @@ type Fake struct {
 	links map[string]*Link
 	route []Route
 	calls []string
+	// xfrmPolicies tracks, per interface identifier, which policy
+	// directions a unit file's `ip xfrm policy add` commands have created.
+	// The systemd simulator records them here; the fake's Create cannot,
+	// because the interface creation carries no associations.
+	xfrmPolicies map[uint32][2]bool
 	// reads counts every observation of kernel state, so a test can assert that
 	// validation rejected bad input before the kernel was consulted at all
 	// (§7.2, the legacy "not-an-ip" bug).
@@ -44,6 +49,7 @@ type Fake struct {
 func NewFake() *Fake {
 	return &Fake{
 		links:            map[string]*Link{},
+		xfrmPolicies:     map[uint32][2]bool{},
 		FailOn:           map[string]error{},
 		UnsupportedKinds: map[string]bool{},
 	}
@@ -253,17 +259,118 @@ func (f *Fake) Create(ctx context.Context, spec TunnelSpec) error {
 		},
 	}
 	if spec.Kind == KindESP {
-		// The fake records what the kernel would: the interface identifier
-		// and both associations, with both policies present.
-		l.Tunnel.Esp = &EspAttrs{
-			IfID:            spec.EspIfID,
-			SPIs:            []uint32{spec.EspSPIOut, spec.EspSPIIn},
-			PoliciesPresent: true,
+		// The fake records what the kernel would. A specification that
+		// carries both SPIs — the runtime path, where the link manager
+		// creates the states and the policies together with the interface —
+		// has both associations and both policies present. A specification
+		// with no SPIs — a unit file's `ip link add`, whose associations
+		// arrive later as `ip xfrm` commands — starts with neither, and
+		// the simulator records them as they are created.
+		esp := &EspAttrs{IfID: spec.EspIfID}
+		for _, spi := range []uint32{spec.EspSPIOut, spec.EspSPIIn} {
+			if spi != 0 {
+				esp.SPIs = append(esp.SPIs, spi)
+			}
 		}
+		esp.PoliciesPresent = len(esp.SPIs) == 2
+		l.Tunnel.Esp = esp
 	}
 	f.links[spec.Name] = l
 	f.publish(Event{Kind: EventAdded, Link: *l})
 	return nil
+}
+
+// RecordXfrmState notes that a security association with this SPI exists for
+// the interface with the given identifier, as `ip xfrm state add` would
+// create it. This is how the systemd simulator models the xfrm commands in
+// a unit file.
+func (f *Fake) RecordXfrmState(ifid, spi uint32) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, l := range f.links {
+		if l.Tunnel == nil || l.Tunnel.Esp == nil || l.Tunnel.Esp.IfID != ifid {
+			continue
+		}
+		for _, have := range l.Tunnel.Esp.SPIs {
+			if have == spi {
+				return
+			}
+		}
+		l.Tunnel.Esp.SPIs = append(l.Tunnel.Esp.SPIs, spi)
+		return
+	}
+}
+
+// RecordXfrmPolicy notes that a policy in this direction exists for the
+// interface with the given identifier, as `ip xfrm policy add` would create
+// it. PoliciesPresent becomes true once both directions are present.
+func (f *Fake) RecordXfrmPolicy(ifid uint32, dir string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var idx int
+	switch dir {
+	case "in":
+		idx = 0
+	case "out":
+		idx = 1
+	default:
+		return
+	}
+	dirs := f.xfrmPolicies[ifid]
+	dirs[idx] = true
+	f.xfrmPolicies[ifid] = dirs
+	for _, l := range f.links {
+		if l.Tunnel == nil || l.Tunnel.Esp == nil || l.Tunnel.Esp.IfID != ifid {
+			continue
+		}
+		l.Tunnel.Esp.PoliciesPresent = dirs[0] && dirs[1]
+		return
+	}
+}
+
+// RemoveXfrmState forgets a security association, as `ip xfrm state del`
+// would remove it. Removing an association that is not there is a success.
+func (f *Fake) RemoveXfrmState(ifid, spi uint32) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, l := range f.links {
+		if l.Tunnel == nil || l.Tunnel.Esp == nil || l.Tunnel.Esp.IfID != ifid {
+			continue
+		}
+		for i, have := range l.Tunnel.Esp.SPIs {
+			if have == spi {
+				l.Tunnel.Esp.SPIs = append(l.Tunnel.Esp.SPIs[:i], l.Tunnel.Esp.SPIs[i+1:]...)
+				return
+			}
+		}
+		return
+	}
+}
+
+// RemoveXfrmPolicy forgets a policy direction, as `ip xfrm policy del` would
+// remove it.
+func (f *Fake) RemoveXfrmPolicy(ifid uint32, dir string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var idx int
+	switch dir {
+	case "in":
+		idx = 0
+	case "out":
+		idx = 1
+	default:
+		return
+	}
+	dirs := f.xfrmPolicies[ifid]
+	dirs[idx] = false
+	f.xfrmPolicies[ifid] = dirs
+	for _, l := range f.links {
+		if l.Tunnel == nil || l.Tunnel.Esp == nil || l.Tunnel.Esp.IfID != ifid {
+			continue
+		}
+		l.Tunnel.Esp.PoliciesPresent = dirs[0] && dirs[1]
+		return
+	}
 }
 
 func (f *Fake) Delete(ctx context.Context, name string) error {

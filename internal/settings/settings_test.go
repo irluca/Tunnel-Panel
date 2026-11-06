@@ -430,7 +430,7 @@ func TestDefaultsMatchTheSpecification(t *testing.T) {
 
 	expectString := map[string]string{
 		"tunnel.default_tos":      "inherit",
-		"tunnel.naming_template":  "gre-{side}-{number}",
+		"tunnel.naming_template":  "{type}-{side}-{number}",
 		"keepalive.mode":          "monitor_only",
 		"display.language":        "en",
 		"display.theme":           "system",

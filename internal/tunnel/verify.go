@@ -24,6 +24,9 @@ const (
 	CheckUnitEnabled   = "unit_enabled"
 	CheckUnitActive    = "unit_active"
 	CheckPeerReachable = "peer_reachable"
+	// CheckEspAssociations confirms the security associations and policies
+	// of an ESP tunnel are present in the kernel.
+	CheckEspAssociations = "esp_associations"
 )
 
 // VerifyCheck is the outcome of one verification step.
@@ -123,6 +126,13 @@ func (s *Service) Verify(ctx context.Context, rec Record) VerifyReport {
 	// 2. Every requested parameter matches the actual one.
 	for _, check := range parameterChecks(ctx, desiredSpec, observed) {
 		report.add(ctx, check)
+	}
+
+	// 2b. For ESP, the security associations and policies are the tunnel:
+	// the interface itself carries no endpoints, so the parameter check
+	// above only compares the MTU and this check confirms the rest.
+	if desiredSpec.Kind == link.KindESP {
+		report.add(ctx, espAssociationCheck(ctx, desiredSpec, observed))
 	}
 
 	// 3. Every requested address is present with the right prefix length.
@@ -247,6 +257,14 @@ func parameterChecks(ctx context.Context, desired link.TunnelSpec, observed link
 		{paramIKey, keyText(desired.IKey), keyText(actual.IKey)},
 		{paramOKey, keyText(desired.OKey), keyText(actual.OKey)},
 	}
+	// An xfrm interface carries no endpoints, TTL or keys: those live in
+	// the security associations, which have their own check. Only the MTU
+	// is compared here.
+	if desired.Kind == link.KindESP {
+		comparisons = []comparison{
+			{paramMtu, itoa(int64(desired.Mtu)), itoa(int64(observed.MTU))},
+		}
+	}
 
 	var mismatches []string
 	for _, c := range comparisons {
@@ -265,6 +283,58 @@ func parameterChecks(ctx context.Context, desired link.TunnelSpec, observed link
 			strings.Join(mismatches, clauseSeparator(i18n.Language(ctx)))),
 		Expected: describeSpec(desired), Actual: describeActual(observed),
 	}}
+}
+
+// espAssociationCheck confirms the two security associations and the two
+// policies of an ESP tunnel are present in the kernel. The interface alone
+// proves nothing: an xfrm interface with no associations carries no traffic.
+func espAssociationCheck(ctx context.Context, desired link.TunnelSpec, observed link.Link) VerifyCheck {
+	actual := observed.Tunnel
+	if actual == nil || actual.Esp == nil {
+		return VerifyCheck{
+			Name: CheckEspAssociations, Fatal: true,
+			Detail:   i18n.T(ctx, "the interface reports no ESP associations at all"),
+			Expected: i18n.T(ctx, "two security associations and two policies"), Actual: i18n.T(ctx, "none"),
+		}
+	}
+	var missing []string
+	for _, spi := range []uint32{desired.EspSPIOut, desired.EspSPIIn} {
+		found := false
+		for _, have := range actual.Esp.SPIs {
+			if have == spi {
+				found = true
+				break
+			}
+		}
+		if !found {
+			missing = append(missing, fmt.Sprintf("0x%x", spi))
+		}
+	}
+	if !actual.Esp.PoliciesPresent {
+		missing = append(missing, i18n.T(ctx, "the policies"))
+	}
+	if len(missing) == 0 {
+		return VerifyCheck{
+			Name: CheckEspAssociations, Ok: true, Fatal: true,
+			Detail: i18n.T(ctx, "both security associations and both policies are present"),
+		}
+	}
+	return VerifyCheck{
+		Name: CheckEspAssociations, Fatal: true,
+		Detail: i18n.T(ctx, "the ESP security associations or policies are missing: %s",
+			strings.Join(missing, ", ")),
+		Expected: fmt.Sprintf("0x%x, 0x%x", desired.EspSPIOut, desired.EspSPIIn),
+		Actual:   spiList(actual.Esp.SPIs),
+	}
+}
+
+// spiList renders the SPIs the kernel reports, for a verification report.
+func spiList(spis []uint32) string {
+	parts := make([]string, len(spis))
+	for i, spi := range spis {
+		parts[i] = fmt.Sprintf("0x%x", spi)
+	}
+	return strings.Join(parts, ", ")
 }
 
 func addressCheck(ctx context.Context, desired []link.Address, observed link.Link) VerifyCheck {

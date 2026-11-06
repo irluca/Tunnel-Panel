@@ -95,8 +95,36 @@ func TestIPv6UnitGolden(t *testing.T) {
 	assertGolden(t, "gre6-a-1.service", renderer().Unit(spec, addresses))
 }
 
+// espSpec is the tunnel the ESP unit file describes: IPv4 ESP with a fixed
+// key, MTU 1350. The SPIs and identifier are derived the same way the panel
+// derives them, so the golden shows the real values.
+func espSpec() link.TunnelSpec {
+	key, err := link.ParseEspKey("00112233445566778899aabbccddeeff00112233")
+	if err != nil {
+		panic(err)
+	}
+	spiOut, spiIn, err := link.EspSPIs(link.EspIdentity{
+		Local: "203.0.113.10", Remote: "198.51.100.20",
+		InnerLocal: "172.17.7.1", InnerRemote: "172.17.7.2",
+	})
+	if err != nil {
+		panic(err)
+	}
+	return link.TunnelSpec{
+		Name: "esp-a-1", Kind: link.KindESP,
+		Local: "203.0.113.10", Remote: "198.51.100.20",
+		Mtu: 1350, EspKey: key,
+		EspSPIOut: spiOut, EspSPIIn: spiIn,
+		EspIfID: link.EspIfID("203.0.113.10", "198.51.100.20", "esp-a-1"),
+	}
+}
+
+func TestESPUnitGolden(t *testing.T) {
+	assertGolden(t, "esp-a-1.service", renderer().Unit(espSpec(), defaultAddresses()))
+}
+
 func TestKeepaliveUnitGolden(t *testing.T) {
-	got := renderer().KeepaliveUnit("gre-a-7", KeepaliveOptions{
+	got := renderer().KeepaliveUnit("gre-a-7", link.KindGRE, KeepaliveOptions{
 		Source: "172.17.7.1", Target: "172.17.7.2", IntervalSeconds: 1, PacketSize: 56,
 	})
 	assertGolden(t, "gre-panel-keepalive-gre-a-7.service", got)
@@ -203,6 +231,9 @@ func TestUnitNames(t *testing.T) {
 	if ModuleFor(link.KindGRE) != "ip_gre" || ModuleFor(link.KindIP6GRE) != "ip6_gre" {
 		t.Fatal("the wrong kernel module was chosen for a tunnel kind")
 	}
+	if ModuleFor(link.KindESP) != "xfrm_interface" {
+		t.Fatalf("the ESP kernel module is %q, want xfrm_interface", ModuleFor(link.KindESP))
+	}
 }
 
 func TestKeepaliveArgs(t *testing.T) {
@@ -267,6 +298,59 @@ func TestWriteAndRemoveAPanelOwnedFile(t *testing.T) {
 	// Removing what is already gone is a success, not an error.
 	if _, err := store.Remove(ctx, path, false); err != nil {
 		t.Fatalf("removing an absent unit failed: %v", err)
+	}
+}
+
+// An ESP unit carries the shared secret, so it is written 0600; anything
+// else keeps the default 0644.
+func TestWriteModeSecret(t *testing.T) {
+	store, _, _ := newStore(t)
+	ctx := context.Background()
+	path := store.UnitPath("esp-a-1")
+
+	content := renderer().Unit(espSpec(), defaultAddresses())
+	if _, err := store.WriteMode(ctx, path, content, false, SecretFileMode); err != nil {
+		t.Fatalf("writing the unit failed: %v", err)
+	}
+	if runtime.GOOS == "windows" {
+		return
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("the unit could not be stat'd: %v", err)
+	}
+	if info.Mode().Perm() != SecretFileMode {
+		t.Fatalf("unit permissions = %v, want %v", info.Mode().Perm(), SecretFileMode)
+	}
+}
+
+// A backup keeps the original's permissions: a backup of an ESP unit carries
+// the same key its unit does, so it must not become world-readable.
+func TestBackupPreservesMode(t *testing.T) {
+	store, _, _ := newStore(t)
+	ctx := context.Background()
+	path := store.UnitPath("esp-a-1")
+
+	content := renderer().Unit(espSpec(), defaultAddresses())
+	if _, err := store.WriteMode(ctx, path, content, false, SecretFileMode); err != nil {
+		t.Fatalf("writing the unit failed: %v", err)
+	}
+	backup, err := store.Backup(ctx, path)
+	if err != nil {
+		t.Fatalf("backing the unit up failed: %v", err)
+	}
+	if backup == "" {
+		t.Fatal("no backup was created")
+	}
+	if runtime.GOOS == "windows" {
+		return
+	}
+	info, err := os.Stat(backup)
+	if err != nil {
+		t.Fatalf("the backup could not be stat'd: %v", err)
+	}
+	if info.Mode().Perm() != SecretFileMode {
+		t.Fatalf("backup permissions = %v, want %v", info.Mode().Perm(), SecretFileMode)
 	}
 }
 

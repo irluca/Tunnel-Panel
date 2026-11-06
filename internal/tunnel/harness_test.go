@@ -229,6 +229,73 @@ func (s *systemdSimulator) interpret(argv []string) error {
 			return err
 		}
 		return s.links.RemoveAddress(ctx, name, addr)
+	case argv[1] == "xfrm" && argv[2] == "state":
+		return s.interpretXfrmState(argv)
+	case argv[1] == "xfrm" && argv[2] == "policy":
+		return s.interpretXfrmPolicy(argv)
+	}
+	return fmt.Errorf("the simulator does not run %v", argv)
+}
+
+// parseXfrm extracts the SPI, interface identifier and direction from an
+// `ip xfrm` command by scanning for their keywords, so the exact argument
+// order the builders produce does not matter.
+func parseXfrm(argv []string) (spi, ifid uint32, dir string, err error) {
+	for i := 1; i < len(argv)-1; i++ {
+		switch argv[i] {
+		case "spi":
+			n, perr := strconv.ParseUint(strings.TrimPrefix(argv[i+1], "0x"), 16, 32)
+			if perr != nil {
+				return 0, 0, "", perr
+			}
+			spi = uint32(n)
+		case "if_id":
+			n, perr := strconv.ParseUint(argv[i+1], 10, 32)
+			if perr != nil {
+				return 0, 0, "", perr
+			}
+			ifid = uint32(n)
+		case "dir":
+			dir = argv[i+1]
+		}
+	}
+	return spi, ifid, dir, nil
+}
+
+func (s *systemdSimulator) interpretXfrmState(argv []string) error {
+	if len(argv) < 4 {
+		return fmt.Errorf("incomplete ip xfrm state command %v", argv)
+	}
+	spi, ifid, _, err := parseXfrm(argv)
+	if err != nil {
+		return err
+	}
+	switch argv[3] {
+	case "add":
+		s.links.RecordXfrmState(ifid, spi)
+		return nil
+	case "del":
+		s.links.RemoveXfrmState(ifid, spi)
+		return nil
+	}
+	return fmt.Errorf("the simulator does not run %v", argv)
+}
+
+func (s *systemdSimulator) interpretXfrmPolicy(argv []string) error {
+	if len(argv) < 4 {
+		return fmt.Errorf("incomplete ip xfrm policy command %v", argv)
+	}
+	_, ifid, dir, err := parseXfrm(argv)
+	if err != nil {
+		return err
+	}
+	switch argv[3] {
+	case "add":
+		s.links.RecordXfrmPolicy(ifid, dir)
+		return nil
+	case "del":
+		s.links.RemoveXfrmPolicy(ifid, dir)
+		return nil
 	}
 	return fmt.Errorf("the simulator does not run %v", argv)
 }
@@ -272,6 +339,12 @@ func parseCreate(argv []string) (link.TunnelSpec, error) {
 		case "type":
 			i++
 			spec.Kind = argv[i]
+			if spec.Kind == "xfrm" {
+				// The kernel calls the interface type xfrm; the panel
+				// calls the tunnel ESP. The real readback translates it
+				// the same way (see normaliseKind in ipcmd.go).
+				spec.Kind = link.KindESP
+			}
 		case "local":
 			i++
 			spec.Local = argv[i]
@@ -335,6 +408,13 @@ func parseCreate(argv []string) (link.TunnelSpec, error) {
 		case "flowlabel":
 			i++
 			spec.FlowLabel = argv[i]
+		case "if_id":
+			i++
+			n, err := strconv.ParseUint(argv[i], 10, 32)
+			if err != nil {
+				return spec, err
+			}
+			spec.EspIfID = uint32(n)
 		}
 	}
 	if spec.Name == "" || spec.Kind == "" {

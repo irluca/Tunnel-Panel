@@ -3,6 +3,7 @@ package tunnel
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/drs/gre-panel/internal/i18n"
@@ -72,6 +73,11 @@ type Step struct {
 	Content  string `json:"content,omitempty"`
 	FileKind string `json:"file_kind,omitempty"`
 	Unit     string `json:"unit,omitempty"`
+
+	// Mode is the permission mask for a file this step writes, as an
+	// integer (0600 is 384). Zero means the store's default: an ESP unit
+	// carries the shared secret, so its step sets 0600.
+	Mode os.FileMode `json:"mode,omitempty"`
 
 	Mtu           int              `json:"mtu,omitempty"`
 	TxQueueLength int              `json:"tx_queue_length,omitempty"`
@@ -391,16 +397,23 @@ type planner struct {
 func (p *planner) PlanCreate(ctx context.Context, rec Record, keepalive KeepaliveFor, takeover bool) Plan {
 	spec := SpecOf(rec)
 	addresses := AddressesOf(rec)
+	verification := []string{
+		i18n.T(ctx, "the interface exists and is of the requested type"),
+		i18n.T(ctx, "the local endpoint, remote endpoint, TTL, MTU and keys match what was asked for"),
+		i18n.T(ctx, "every requested address is present with the right prefix length"),
+		i18n.T(ctx, "the flags include UP and LOWER_UP"),
+	}
+	if spec.Kind == link.KindESP {
+		// An ESP tunnel has no endpoints or keys on the interface itself;
+		// what is verified is the MTU and the associations behind it.
+		verification[1] = i18n.T(ctx, "the MTU matches what was asked for, and both security "+
+			"associations and both policies are present in the kernel")
+	}
 	plan := Plan{
-		Operation: OpCreate,
-		Interface: rec.InterfaceName,
-		TunnelID:  rec.TunnelID,
-		Verification: []string{
-			i18n.T(ctx, "the interface exists and is of the requested type"),
-			i18n.T(ctx, "the local endpoint, remote endpoint, TTL, MTU and keys match what was asked for"),
-			i18n.T(ctx, "every requested address is present with the right prefix length"),
-			i18n.T(ctx, "the flags include UP and LOWER_UP"),
-		},
+		Operation:    OpCreate,
+		Interface:    rec.InterfaceName,
+		TunnelID:     rec.TunnelID,
+		Verification: verification,
 	}
 
 	switch rec.PersistenceTypeID {
@@ -412,6 +425,17 @@ func (p *planner) PlanCreate(ctx context.Context, rec Record, keepalive Keepaliv
 		p.planRuntimeCreate(ctx, &plan, spec, addresses)
 	}
 	return plan
+}
+
+// unitFileMode is the permission mask for a tunnel's systemd unit. An ESP
+// unit carries the shared secret in its ExecStart lines, so it is readable
+// only by root; zero means the store's default, which is what every other
+// unit uses — and what keeps their plans byte-identical to before.
+func unitFileMode(kind string) os.FileMode {
+	if kind == link.KindESP {
+		return persist.SecretFileMode
+	}
+	return 0
 }
 
 func (p *planner) planSystemdCreate(ctx context.Context, plan *Plan, rec Record, spec link.TunnelSpec,
@@ -426,7 +450,7 @@ func (p *planner) planSystemdCreate(ctx context.Context, plan *Plan, rec Record,
 	plan.Add(Step{
 		Kind: StepFileWrite, Description: i18n.T(ctx, "write the systemd unit %s", unit),
 		Path: unitPath, Content: body, FileKind: FileSystemdUnit, Unit: unit,
-		Interface: name, Takeover: takeover,
+		Interface: name, Takeover: takeover, Mode: unitFileMode(spec.Kind),
 	})
 	plan.AddRollback(Step{
 		Kind: StepFileRemove, Description: i18n.T(ctx, "remove the systemd unit %s", unit),
@@ -436,7 +460,7 @@ func (p *planner) planSystemdCreate(ctx context.Context, plan *Plan, rec Record,
 	if keepalive.Enabled {
 		keepaliveUnit := persist.KeepaliveUnitName(name)
 		keepalivePath := p.store.KeepaliveUnitPath(name)
-		keepaliveBody := p.renderer.KeepaliveUnit(name, keepalive.Options)
+		keepaliveBody := p.renderer.KeepaliveUnit(name, spec.Kind, keepalive.Options)
 
 		plan.AddFile(FileKeepaliveUnit, keepalivePath, keepaliveBody)
 		plan.Add(Step{
@@ -932,18 +956,18 @@ func (p *planner) planRewritePersistence(ctx context.Context, plan *Plan, curren
 		plan.Add(Step{
 			Kind: StepFileWrite, Description: i18n.T(ctx, "rewrite the systemd unit %s", unit),
 			Path: unitPath, Content: body, FileKind: FileSystemdUnit, Unit: unit,
-			Interface: name, Takeover: takeover,
+			Interface: name, Takeover: takeover, Mode: unitFileMode(spec.Kind),
 		})
 		plan.AddRollback(Step{
 			Kind: StepFileWrite, Description: i18n.T(ctx, "restore the previous systemd unit %s", unit),
 			Path: unitPath, Content: previous, FileKind: FileSystemdUnit, Unit: unit,
-			Interface: name, Takeover: takeover,
+			Interface: name, Takeover: takeover, Mode: unitFileMode(SpecOf(current).Kind),
 		})
 
 		if keepalive.Enabled {
 			keepaliveUnit := persist.KeepaliveUnitName(name)
 			keepalivePath := p.store.KeepaliveUnitPath(name)
-			keepaliveBody := p.renderer.KeepaliveUnit(name, keepalive.Options)
+			keepaliveBody := p.renderer.KeepaliveUnit(name, spec.Kind, keepalive.Options)
 			plan.AddFile(FileKeepaliveUnit, keepalivePath, keepaliveBody)
 			plan.Add(Step{
 				Kind: StepFileWrite, Description: i18n.T(ctx, "rewrite the keepalive unit %s", keepaliveUnit),

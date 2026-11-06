@@ -18,6 +18,11 @@ import (
 // are ordinarily world-readable and carry no secrets.
 const UnitFileMode os.FileMode = 0o644
 
+// SecretFileMode is the permission mask for a generated file that carries a
+// secret. An ESP unit's ExecStart lines contain the pre-shared key, so it is
+// readable only by root.
+const SecretFileMode os.FileMode = 0o600
+
 // BackupSuffix marks a copy of a file the panel took over from something else
 // (§17.3). The timestamp keeps repeated takeovers from overwriting each other.
 const BackupSuffix = ".gre-panel-backup"
@@ -102,8 +107,18 @@ func IsPanelOwned(path string) (bool, error) {
 
 // Write writes a generated file atomically, refusing to overwrite one the panel
 // does not own unless takeover is set, and backing the original up first when
-// it is (§17.3).
+// it is (§17.3). The file gets the store's default mode.
 func (s *Store) Write(ctx context.Context, path, content string, takeover bool) (backupPath string, err error) {
+	return s.WriteMode(ctx, path, content, takeover, 0)
+}
+
+// WriteMode is Write with an explicit permission mask. A zero mode means the
+// store's default; an ESP unit passes SecretFileMode, because its ExecStart
+// lines carry the pre-shared key.
+func (s *Store) WriteMode(ctx context.Context, path, content string, takeover bool, mode os.FileMode) (backupPath string, err error) {
+	if mode == 0 {
+		mode = UnitFileMode
+	}
 	owned, err := IsPanelOwned(path)
 	if err != nil {
 		return "", err
@@ -125,14 +140,14 @@ func (s *Store) Write(ctx context.Context, path, content string, takeover bool) 
 	// Write to a sibling and rename, so a crash mid-write cannot leave systemd
 	// reading half a unit file.
 	temp := path + ".tmp"
-	if err := os.WriteFile(temp, []byte(content), UnitFileMode); err != nil {
+	if err := os.WriteFile(temp, []byte(content), mode); err != nil {
 		return backupPath, i18n.Errorf(ctx, "writing %s: %w", temp, err)
 	}
 	if err := os.Rename(temp, path); err != nil {
 		_ = os.Remove(temp)
 		return backupPath, i18n.Errorf(ctx, "installing %s: %w", path, err)
 	}
-	if err := os.Chmod(path, UnitFileMode); err != nil {
+	if err := os.Chmod(path, mode); err != nil {
 		return backupPath, i18n.Errorf(ctx, "setting permissions on %s: %w", path, err)
 	}
 	s.trace(ctx, "write "+path, nil)
@@ -153,7 +168,14 @@ func (s *Store) Backup(ctx context.Context, path string) (string, error) {
 		now = s.Now
 	}
 	backup := fmt.Sprintf("%s%s.%s", path, BackupSuffix, now().UTC().Format("20060102T150405Z"))
-	if err := os.WriteFile(backup, raw, UnitFileMode); err != nil {
+	// A backup keeps the original's permissions: a backup of an ESP unit
+	// carries the same key its unit does, so it must not become
+	// world-readable by being copied with the default mode.
+	mode := UnitFileMode
+	if info, err := os.Stat(path); err == nil {
+		mode = info.Mode().Perm()
+	}
+	if err := os.WriteFile(backup, raw, mode); err != nil {
 		return "", i18n.Errorf(ctx, "writing the backup %s: %w", backup, err)
 	}
 	s.trace(ctx, "backup "+path+" to "+backup, nil)

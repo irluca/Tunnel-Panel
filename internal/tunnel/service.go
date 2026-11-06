@@ -352,8 +352,9 @@ func (s *Service) ApplyDefaults(ctx context.Context, in *validate.TunnelInput) e
 	}
 	// The default key is applied only when creating. On an update, no key is a
 	// deliberate instruction — an operator clearing the keys means it — and
-	// putting the default back would silently undo it.
-	if in.TunnelID == 0 && in.IKey == nil && in.OKey == nil {
+	// putting the default back would silently undo it. An ESP tunnel has no
+	// GRE keys at all, so the default never applies to one.
+	if in.TunnelID == 0 && in.TunnelTypeID != model.TunnelTypeESP && in.IKey == nil && in.OKey == nil {
 		if key := s.settings.IntPtr("tunnel.default_key"); key != nil {
 			value := *key
 			in.IKey = &value
@@ -575,7 +576,7 @@ func (s *Service) RenderName(in validate.TunnelInput) (string, error) {
 func (s *Service) renderName(ctx context.Context, in validate.TunnelInput) (string, error) {
 	template := s.settings.String("tunnel.naming_template")
 	if strings.TrimSpace(template) == "" {
-		template = "gre-{side}-{number}"
+		template = "{type}-{side}-{number}"
 	}
 	labels := s.settings.StringMap("tunnel.side_labels")
 	slot := model.SideSlot(in.TunnelSideID)
@@ -1273,7 +1274,7 @@ func (s *Service) runStep(ctx context.Context, step Step, takeover bool) error {
 		return s.links.RemoveAddress(ctx, step.Interface, *step.Address)
 
 	case StepFileWrite:
-		_, err := s.store.Write(ctx, step.Path, step.Content, step.Takeover && takeover)
+		_, err := s.store.WriteMode(ctx, step.Path, step.Content, step.Takeover && takeover, step.Mode)
 		return err
 	case StepFileRemove:
 		_, err := s.store.Remove(ctx, step.Path, step.Takeover && takeover)
