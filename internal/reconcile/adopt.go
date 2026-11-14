@@ -209,6 +209,29 @@ func (s *Service) Adopt(ctx context.Context, req AdoptRequest) (AdoptResult, err
 func (s *Service) importFrom(ctx context.Context, observed link.Link, req AdoptRequest,
 	legacy LegacyInfo, isLegacy bool) (validate.TunnelInput, []validate.Warning, error) {
 
+	// The kernel cannot tell one TUN-relay tunnel from another: `ip link`
+	// reports every TUN interface as kind "tun", which the manager reads
+	// as GRE-over-WSS. The panel-owned artifacts decide which relay owns
+	// it: an EZTunnel JSON config in the panel's config directory means
+	// EZTunnel, a unit whose command line runs omnitun means OmniTunnel,
+	// and anything else stays GRE-over-WSS. Without this a real
+	// EZTunnel or OmniTunnel interface would be adopted as GRE-over-WSS
+	// and its settings would be unrecoverable.
+	if observed.Kind == link.KindGREWSS {
+		if s.Renderer != nil {
+			if raw, err := os.ReadFile(s.Renderer.EzConfigPath(observed.Name)); err == nil {
+				if _, err := link.ParseEzConfig(raw); err == nil {
+					observed.Kind = link.KindEZTunnel
+				}
+			}
+		}
+		if observed.Kind == link.KindGREWSS {
+			if _, _, _, _, _, ok := readOmniUnit(s.Store.UnitPath(observed.Name)); ok {
+				observed.Kind = link.KindOmniTunnel
+			}
+		}
+	}
+
 	typeID, ok := model.TunnelTypeForKind(observed.Kind)
 	if !ok {
 		errs := &validate.Errors{}
@@ -342,6 +365,77 @@ func (s *Service) importFrom(ctx context.Context, observed link.Link, req AdoptR
 			if conns != 0 {
 				c := int64(conns)
 				in.OmniConns = &c
+			}
+		}
+	}
+	// An EZTunnel tunnel's settings are not readable from the kernel either
+	// — a TUN reports neither transport nor port — so they are recovered
+	// from the panel-owned JSON config, which carries the whole tunnel:
+	// the mode, the transport, the port, the per-transport settings and,
+	// for a raw carrier, both underlay endpoints. The key comes back with
+	// them: the panel wrote this file itself (0600), so the adopted tunnel
+	// keeps the key it already has and carries on working without
+	// re-pairing. Without a panel-owned config they stay empty and
+	// validation refuses the adoption honestly, rather than adopting a
+	// tunnel with settings nobody knows.
+	if observed.Kind == link.KindEZTunnel && s.Renderer != nil {
+		if raw, err := os.ReadFile(s.Renderer.EzConfigPath(observed.Name)); err == nil {
+			if cfg, err := link.ParseEzConfig(raw); err == nil {
+				in.EzTransport = &cfg.Transport
+				in.EzKey = &cfg.Key
+				// The endpoints are whatever the config names: both for a
+				// raw carrier, the peer only for a client, neither for a
+				// server. What it does not name stays empty and validation
+				// refuses the adoption honestly, rather than adopting a
+				// tunnel with endpoints nobody knows.
+				if cfg.LocalEndpoint != "" {
+					in.LocalEndpoint = cfg.LocalEndpoint
+				}
+				if cfg.RemoteEndpoint != "" {
+					in.RemoteEndpoint = cfg.RemoteEndpoint
+				}
+				if cfg.Port != 0 {
+					p := int64(cfg.Port)
+					in.EzPort = &p
+				}
+				if cfg.HttpPath != "" {
+					in.EzHttpPath = &cfg.HttpPath
+				}
+				if cfg.XhttpMode != "" {
+					in.EzXhttpMode = &cfg.XhttpMode
+				}
+				if cfg.XhttpHost != "" {
+					in.EzXhttpHost = &cfg.XhttpHost
+				}
+				if cfg.RawProfile != "" {
+					in.EzRawProfile = &cfg.RawProfile
+				}
+				if cfg.RawInterface != "" {
+					in.EzRawInterface = &cfg.RawInterface
+				}
+				if cfg.MirageUplink != "" {
+					in.EzMirageUplink = &cfg.MirageUplink
+				}
+				if cfg.MirageDownlink != "" {
+					in.EzMirageDownlink = &cfg.MirageDownlink
+				}
+				if cfg.SpoofSources != nil {
+					in.EzSpoofSources = &cfg.SpoofSources
+				}
+				if cfg.MirageExpected != nil {
+					in.EzMirageExpected = &cfg.MirageExpected
+				}
+				// The mode is the side: a server listens, a client dials.
+				// It overrides the default side, never an explicit
+				// override the operator gave in the request.
+				if req.TunnelSideID == nil {
+					switch cfg.Mode {
+					case link.EzModeServer:
+						in.TunnelSideID = model.TunnelSideA
+					case link.EzModeClient:
+						in.TunnelSideID = model.TunnelSideB
+					}
+				}
 			}
 		}
 	}

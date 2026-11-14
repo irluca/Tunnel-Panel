@@ -28,6 +28,11 @@ const (
 	// userspace relay feeding a TUN interface. It is for paths where GRE and
 	// ESP are filtered and a plain WebSocket is not enough.
 	TunnelTypeOmniTunnel int64 = 70
+	// TunnelTypeEZTunnel is an EZTunnel tunnel: one of the fifteen eztunnel
+	// transports, run by the eztunnel binary as a userspace relay feeding a
+	// TUN interface, Noise-encrypted on every transport. It is the engine
+	// of this fork's Phase 6: the panel manages it, the binary carries it.
+	TunnelTypeEZTunnel int64 = 80
 )
 
 // TunnelSide identifiers. A and B are the two ends of one tunnel; neither has a
@@ -251,6 +256,7 @@ var tunnelTypeKinds = map[int64]string{
 	TunnelTypeESP:        "esp",
 	TunnelTypeGREWSS:     "gre-wss",
 	TunnelTypeOmniTunnel: "omnitunnel",
+	TunnelTypeEZTunnel:   "eztunnel",
 }
 
 // TunnelTypeKind returns the kernel's name for a tunnel type, or "" when the
@@ -384,6 +390,7 @@ func LookupTables() []LookupTable {
 			{TunnelTypeESP, "ESP"},
 			{TunnelTypeGREWSS, "GRE over WSS"},
 			{TunnelTypeOmniTunnel, "OmniTunnel"},
+			{TunnelTypeEZTunnel, "EZTunnel"},
 		}},
 		{Name: "TunnelSide", Values: []LookupValue{
 			{TunnelSideA, "A"},

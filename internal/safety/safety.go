@@ -119,11 +119,23 @@ type Guard struct {
 	// SystemdDir and NetworkdDir bound where generated files may be written.
 	SystemdDir  string
 	NetworkdDir string
+	// EzConfigDir bounds where the EZTunnel JSON configs may be written.
+	// It is a third write directory of its own because the configs live
+	// under the panel's data directory, not under systemd or networkd,
+	// and the guard must know it or every EZTunnel write is refused.
+	EzConfigDir string
 }
 
 // New returns a guard.
 func New(links link.LinkManager, systemdDir, networkdDir string) *Guard {
 	return &Guard{Links: links, SystemdDir: systemdDir, NetworkdDir: networkdDir}
+}
+
+// WithEzConfigDir sets the directory the EZTunnel JSON configs may be
+// written under.
+func (g *Guard) WithEzConfigDir(dir string) *Guard {
+	g.EzConfigDir = dir
+	return g
 }
 
 // CheckInterface is invariant 1: the panel only ever creates, modifies, or
@@ -227,7 +239,7 @@ func (g *Guard) CheckPath(target string) error {
 		}
 	}
 
-	for _, allowed := range []string{g.SystemdDir, g.NetworkdDir} {
+	for _, allowed := range []string{g.SystemdDir, g.NetworkdDir, g.EzConfigDir} {
 		if allowed == "" {
 			continue
 		}

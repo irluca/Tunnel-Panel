@@ -26,7 +26,7 @@ import { useToast } from '@/providers/ToastProvider'
 import { describeError } from '../ui/feedback'
 import { verificationFailures, verificationPassed } from '@/hooks/useTunnelActions'
 import { Button } from '../ui/button'
-import { Checkbox, Field, Input, Select, SwitchField, TechnicalInput } from '../ui/form'
+import { Checkbox, Field, Input, Select, SwitchField, TechnicalInput, Textarea } from '../ui/form'
 import { DisclosurePanel } from '../ui/disclosure'
 import {
   Dialog,
@@ -69,6 +69,22 @@ const MAX_ENCAP_LIMIT = 255
 
 /** The tunnel types whose outer header is IPv6, and so have these two fields. */
 const IPV6_TUNNEL_TYPES: number[] = [TunnelType.IP6GRE, TunnelType.IP6GRETAP]
+
+/**
+ * The tunnel types that carry GRE keys. ESP, OmniTunnel and EZTunnel have no
+ * GRE header at all, and the backend refuses the keys on them — so the form
+ * must not send them, or creating one of those types from the form fails with
+ * a refusal about a field the operator never saw. The blank form still holds
+ * a generated key for the GRE types, which is why this is a send-time gate
+ * rather than a form-state one.
+ */
+const GRE_KEY_TUNNEL_TYPES: number[] = [
+  TunnelType.GRE,
+  TunnelType.GRETAP,
+  TunnelType.IP6GRE,
+  TunnelType.IP6GRETAP,
+  TunnelType.GREWSS,
+]
 
 /** The fields whose inputs live in the Advanced panel, which starts closed. */
 const ADVANCED_FIELDS = new Set([
@@ -350,6 +366,35 @@ export function TunnelFormDialog({
 
   const set = <K extends keyof FormState>(key: K, value: FormState[K]) =>
     setForm((current) => (current ? { ...current, [key]: value } : current))
+
+  // Changing the EZTunnel transport clears the settings the new transport
+  // does not take, so a leftover Mirage spoof list cannot make a plain TCP
+  // tunnel fail validation with "Only Mirage takes spoof sources". The
+  // backend refuses those fields on the wrong transport, so the form must
+  // not send them.
+  const setEzTransport = (transport: string | null) => {
+    set('ez_transport', transport)
+    setForm((current) => {
+      if (!current) return current
+      const next: FormState = { ...current }
+      if (!transport || !EZ_HTTP_PATH_TRANSPORTS.includes(transport)) next.ez_http_path = null
+      if (!transport || !EZ_XHTTP_TRANSPORTS.includes(transport)) {
+        next.ez_xhttp_mode = null
+        next.ez_xhttp_host = null
+      }
+      if (!transport || !EZ_RAW_TRANSPORTS.includes(transport)) {
+        next.ez_raw_profile = null
+        next.ez_raw_interface = null
+      }
+      if (transport !== 'mirage') {
+        next.ez_mirage_uplink = null
+        next.ez_mirage_downlink = null
+        next.ez_spoof_sources = null
+        next.ez_mirage_expected = null
+      }
+      return next
+    })
+  }
 
   const tunnelTypes = (capabilitiesQuery.data?.tunnel_types ?? []).filter((type) => type.supported)
   const persistenceOptions = capabilitiesQuery.data?.persistence ?? []
@@ -758,6 +803,251 @@ export function TunnelFormDialog({
                   />
                 )}
               </Field>
+              ) : null}
+              </>
+              ) : null}
+
+              {form.tunnel_type_id === TunnelType.EZTunnel ? (
+              <>
+              <Field
+                label={t('tunnel.fields.ezTransport')}
+                description={t('tunnel.help.ezTransport')}
+                error={fieldErrors['ez_transport']}
+                required
+              >
+                {(props) => (
+                  <Select
+                    id={props.id}
+                    value={form.ez_transport ?? ''}
+                    onValueChange={(value) => setEzTransport(value === '' ? null : value)}
+                    options={[
+                      { value: 'tcp', label: 'tcp' },
+                      { value: 'tcp6', label: 'tcp6' },
+                      { value: 'ws', label: 'ws' },
+                      { value: 'wss', label: 'wss' },
+                      { value: 'http', label: 'http' },
+                      { value: 'https', label: 'https' },
+                      { value: 'xhttp', label: 'xhttp' },
+                      { value: 'xhttps', label: 'xhttps' },
+                      { value: 'kcp', label: 'kcp' },
+                      { value: 'fec-udp', label: 'fec-udp' },
+                      { value: 'fec-raw', label: 'fec-raw' },
+                      { value: 'fec-raw-gaming', label: 'fec-raw-gaming' },
+                      { value: 'tun', label: 'tun' },
+                      { value: 'parallax', label: 'parallax' },
+                      { value: 'mirage', label: 'mirage' },
+                    ]}
+                  />
+                )}
+              </Field>
+              <Field
+                label={t('tunnel.fields.ezKey')}
+                description={t('tunnel.help.ezKey')}
+                error={fieldErrors['ez_key']}
+              >
+                {(props) => (
+                  <TechnicalInput
+                    {...props}
+                    className="flex-1"
+                    value={form.ez_key ?? ''}
+                    onChange={(event) => set('ez_key', event.target.value === '' ? null : event.target.value)}
+                    placeholder="aaaaa-bbbbb-ccccc-ddddd-eeeee"
+                  />
+                )}
+              </Field>
+              <Field
+                label={t('tunnel.fields.ezPort')}
+                description={t('tunnel.help.ezPort')}
+                error={fieldErrors['ez_port']}
+                required
+              >
+                {(props) => (
+                  <TechnicalInput
+                    {...props}
+                    type="number"
+                    min={1}
+                    max={65535}
+                    value={form.ez_port ?? ''}
+                    onChange={(event) => set('ez_port', event.target.value === '' ? null : Number(event.target.value))}
+                    placeholder={t('tunnel.help.ezPortPlaceholder')}
+                  />
+                )}
+              </Field>
+              {form.ez_transport !== null && EZ_HTTP_PATH_TRANSPORTS.includes(form.ez_transport) ? (
+              <Field
+                label={t('tunnel.fields.ezHttpPath')}
+                description={t('tunnel.help.ezHttpPath')}
+                error={fieldErrors['ez_http_path']}
+              >
+                {(props) => (
+                  <TechnicalInput
+                    {...props}
+                    value={form.ez_http_path ?? ''}
+                    onChange={(event) => set('ez_http_path', event.target.value === '' ? null : event.target.value)}
+                    placeholder="/tunnel"
+                  />
+                )}
+              </Field>
+              ) : null}
+              {form.ez_transport !== null && EZ_XHTTP_TRANSPORTS.includes(form.ez_transport) ? (
+              <>
+              <Field
+                label={t('tunnel.fields.ezXhttpMode')}
+                description={t('tunnel.help.ezXhttpMode')}
+                error={fieldErrors['ez_xhttp_mode']}
+              >
+                {(props) => (
+                  <Select
+                    id={props.id}
+                    value={form.ez_xhttp_mode ?? ''}
+                    onValueChange={(value) => set('ez_xhttp_mode', value === '' ? null : value)}
+                    options={[
+                      { value: 'auto', label: 'auto' },
+                      { value: 'stream-up', label: 'stream-up' },
+                      { value: 'packet-up', label: 'packet-up' },
+                    ]}
+                  />
+                )}
+              </Field>
+              <Field
+                label={t('tunnel.fields.ezXhttpHost')}
+                description={t('tunnel.help.ezXhttpHost')}
+                error={fieldErrors['ez_xhttp_host']}
+              >
+                {(props) => (
+                  <TechnicalInput
+                    {...props}
+                    value={form.ez_xhttp_host ?? ''}
+                    onChange={(event) => set('ez_xhttp_host', event.target.value === '' ? null : event.target.value)}
+                    placeholder="example.com"
+                  />
+                )}
+              </Field>
+              </>
+              ) : null}
+              {form.ez_transport !== null && EZ_RAW_TRANSPORTS.includes(form.ez_transport) ? (
+              <>
+              <Field
+                label={t('tunnel.fields.ezRawProfile')}
+                description={t('tunnel.help.ezRawProfile')}
+                error={fieldErrors['ez_raw_profile']}
+                required
+              >
+                {(props) => (
+                  <Select
+                    id={props.id}
+                    value={form.ez_raw_profile ?? ''}
+                    onValueChange={(value) => set('ez_raw_profile', value === '' ? null : value)}
+                    options={[
+                      { value: 'tcp', label: 'tcp' },
+                      { value: 'udp', label: 'udp' },
+                      { value: 'icmp', label: 'icmp' },
+                      { value: 'gre', label: 'gre' },
+                      { value: 'ipip', label: 'ipip' },
+                      { value: 'raw', label: 'raw' },
+                      { value: 'dns', label: 'dns' },
+                    ]}
+                  />
+                )}
+              </Field>
+              <Field
+                label={t('tunnel.fields.ezRawInterface')}
+                description={t('tunnel.help.ezRawInterface')}
+                error={fieldErrors['ez_raw_interface']}
+              >
+                {(props) => (
+                  <TechnicalInput
+                    {...props}
+                    value={form.ez_raw_interface ?? ''}
+                    onChange={(event) => set('ez_raw_interface', event.target.value === '' ? null : event.target.value)}
+                    placeholder="eth0"
+                  />
+                )}
+              </Field>
+              </>
+              ) : null}
+              {form.ez_transport === 'mirage' ? (
+              <>
+              <Field
+                label={t('tunnel.fields.ezMirageUplink')}
+                description={t('tunnel.help.ezMirageUplink')}
+                error={fieldErrors['ez_mirage_uplink']}
+                required
+              >
+                {(props) => (
+                  <Select
+                    id={props.id}
+                    value={form.ez_mirage_uplink ?? ''}
+                    onValueChange={(value) => set('ez_mirage_uplink', value === '' ? null : value)}
+                    options={[
+                      { value: 'tcp', label: 'tcp' },
+                      { value: 'udp', label: 'udp' },
+                      { value: 'icmp', label: 'icmp' },
+                      { value: 'icmpv6', label: 'icmpv6' },
+                      { value: 'gre', label: 'gre' },
+                      { value: 'ipip', label: 'ipip' },
+                      { value: 'bip', label: 'bip' },
+                    ]}
+                  />
+                )}
+              </Field>
+              <Field
+                label={t('tunnel.fields.ezMirageDownlink')}
+                description={t('tunnel.help.ezMirageDownlink')}
+                error={fieldErrors['ez_mirage_downlink']}
+                required
+              >
+                {(props) => (
+                  <Select
+                    id={props.id}
+                    value={form.ez_mirage_downlink ?? ''}
+                    onValueChange={(value) => set('ez_mirage_downlink', value === '' ? null : value)}
+                    options={[
+                      { value: 'tcp', label: 'tcp' },
+                      { value: 'udp', label: 'udp' },
+                      { value: 'icmp', label: 'icmp' },
+                      { value: 'icmpv6', label: 'icmpv6' },
+                      { value: 'gre', label: 'gre' },
+                      { value: 'ipip', label: 'ipip' },
+                      { value: 'bip', label: 'bip' },
+                    ]}
+                  />
+                )}
+              </Field>
+              <Field
+                label={t('tunnel.fields.ezSpoofSources')}
+                description={t('tunnel.help.ezSpoofSources')}
+                error={fieldErrors['ez_spoof_sources']}
+                required
+              >
+                {(props) => (
+                  <Textarea
+                    {...props}
+                    rows={4}
+                    className="technical"
+                    value={ezIpListText(form.ez_spoof_sources)}
+                    onChange={(event) => set('ez_spoof_sources', parseEzIpList(event.target.value))}
+                    placeholder={'203.0.113.7\n198.51.100.23'}
+                  />
+                )}
+              </Field>
+              <Field
+                label={t('tunnel.fields.ezMirageExpected')}
+                description={t('tunnel.help.ezMirageExpected')}
+                error={fieldErrors['ez_mirage_expected']}
+              >
+                {(props) => (
+                  <Textarea
+                    {...props}
+                    rows={4}
+                    className="technical"
+                    value={ezIpListText(form.ez_mirage_expected)}
+                    onChange={(event) => set('ez_mirage_expected', parseEzIpList(event.target.value))}
+                    placeholder={'203.0.113.7\n198.51.100.23'}
+                  />
+                )}
+              </Field>
+              </>
               ) : null}
               </>
               ) : null}
@@ -1644,6 +1934,18 @@ function defaultsFrom(settings: Record<string, unknown>, used?: Set<number>): Fo
     omni_key: null,
     omni_port: null,
     omni_conns: null,
+    ez_transport: null,
+    ez_key: null,
+    ez_port: null,
+    ez_http_path: null,
+    ez_xhttp_mode: null,
+    ez_xhttp_host: null,
+    ez_raw_profile: null,
+    ez_raw_interface: null,
+    ez_mirage_uplink: null,
+    ez_mirage_downlink: null,
+    ez_spoof_sources: null,
+    ez_mirage_expected: null,
     has_input_checksum: boolean('tunnel.default_csum', false),
     has_output_checksum: boolean('tunnel.default_csum', false),
     has_input_sequence: boolean('tunnel.default_seq', false),
@@ -1691,6 +1993,22 @@ function formFromTunnel(tunnel: Tunnel): FormState {
     omni_key: null,
     omni_port: tunnel.omni_port,
     omni_conns: tunnel.omni_conns,
+    // And the same, for the EZTunnel key: the transport, port and
+    // per-transport settings are returned, so editing keeps the stored
+    // ones unless the operator changes them. The spoof lists come back
+    // as JSON text and are parsed here, so the form works with arrays.
+    ez_transport: tunnel.ez_transport,
+    ez_key: null,
+    ez_port: tunnel.ez_port,
+    ez_http_path: tunnel.ez_http_path,
+    ez_xhttp_mode: tunnel.ez_xhttp_mode,
+    ez_xhttp_host: tunnel.ez_xhttp_host,
+    ez_raw_profile: tunnel.ez_raw_profile,
+    ez_raw_interface: tunnel.ez_raw_interface,
+    ez_mirage_uplink: tunnel.ez_mirage_uplink,
+    ez_mirage_downlink: tunnel.ez_mirage_downlink,
+    ez_spoof_sources: parseEzStoredList(tunnel.ez_spoof_sources),
+    ez_mirage_expected: parseEzStoredList(tunnel.ez_mirage_expected),
     has_input_checksum: tunnel.has_input_checksum,
     has_output_checksum: tunnel.has_output_checksum,
     has_input_sequence: tunnel.has_input_sequence,
@@ -1739,8 +2057,6 @@ export function toPatch(form: FormState, manual: boolean): Record<string, unknow
     ttl: form.ttl,
     tos: form.tos,
     mtu: form.mtu,
-    ikey: form.ikey,
-    okey: form.okey,
     has_input_checksum: form.has_input_checksum,
     has_output_checksum: form.has_output_checksum,
     has_input_sequence: form.has_input_sequence,
@@ -1752,6 +2068,14 @@ export function toPatch(form: FormState, manual: boolean): Record<string, unknow
     // no "leave it alone" empty meaning, so clearing the field in the form
     // must clear it on the tunnel too.
     display_name: form.display_name ?? '',
+  }
+
+  // The GRE keys travel only on the types that carry a GRE header. ESP,
+  // OmniTunnel and EZTunnel have none, and the backend refuses the keys on
+  // them.
+  if (GRE_KEY_TUNNEL_TYPES.includes(form.tunnel_type_id)) {
+    patch.ikey = form.ikey
+    patch.okey = form.okey
   }
 
   // The ESP key is only sent when the operator typed one: absent means
@@ -1771,6 +2095,25 @@ export function toPatch(form: FormState, manual: boolean): Record<string, unknow
   if (form.omni_key) patch.omni_key = form.omni_key
   if (form.omni_port !== null) patch.omni_port = form.omni_port
   if (form.omni_conns !== null) patch.omni_conns = form.omni_conns
+
+  // The EZTunnel key follows the same rule: absent means "generate one" on
+  // create and "keep the existing key" on edit. The transport, port and
+  // per-transport settings are always sent when set, and the spoof lists
+  // when present — an empty list is sent as an empty list, so clearing the
+  // sources on a Mirage tunnel is refused by the backend with the reason
+  // rather than silently keeping the old ones.
+  if (form.ez_transport) patch.ez_transport = form.ez_transport
+  if (form.ez_key) patch.ez_key = form.ez_key
+  if (form.ez_port !== null) patch.ez_port = form.ez_port
+  if (form.ez_http_path) patch.ez_http_path = form.ez_http_path
+  if (form.ez_xhttp_mode) patch.ez_xhttp_mode = form.ez_xhttp_mode
+  if (form.ez_xhttp_host) patch.ez_xhttp_host = form.ez_xhttp_host
+  if (form.ez_raw_profile) patch.ez_raw_profile = form.ez_raw_profile
+  if (form.ez_raw_interface) patch.ez_raw_interface = form.ez_raw_interface
+  if (form.ez_mirage_uplink) patch.ez_mirage_uplink = form.ez_mirage_uplink
+  if (form.ez_mirage_downlink) patch.ez_mirage_downlink = form.ez_mirage_downlink
+  if (form.ez_spoof_sources !== null) patch.ez_spoof_sources = form.ez_spoof_sources
+  if (form.ez_mirage_expected !== null) patch.ez_mirage_expected = form.ez_mirage_expected
 
   if (form.interface_name) patch.interface_name = form.interface_name
   if (form.bind_device) patch.bind_device = form.bind_device
@@ -1862,6 +2205,51 @@ export function randomOmniKey(): string {
   const buffer = new Uint8Array(32)
   crypto.getRandomValues(buffer)
   return Array.from(buffer, (byte) => byte.toString(16).padStart(2, '0')).join('')
+}
+
+/**
+ * The EZTunnel transports that take an HTTP path (the HTTP and WebSocket
+ * families, including XHTTP), the ones that take the nested xhttp block,
+ * and the raw carriers. They mirror EzTransportNeedsHTTPPath,
+ * EzTransportIsXHTTP and EzTransportNeedsRaw in internal/link/eztunnel.go;
+ * keeping them in step is what makes the per-transport sections appear for
+ * exactly the transports that take those settings.
+ */
+const EZ_HTTP_PATH_TRANSPORTS = ['http', 'https', 'ws', 'wss', 'xhttp', 'xhttps']
+const EZ_XHTTP_TRANSPORTS = ['xhttp', 'xhttps']
+const EZ_RAW_TRANSPORTS = ['fec-raw', 'fec-raw-gaming', 'tun', 'mirage']
+
+/**
+ * An EZTunnel spoof list as the operator types it: one IPv4 address per
+ * line. Commas are tolerated because pasting a list usually brings them.
+ */
+export function parseEzIpList(text: string): string[] {
+  return text
+    .split(/[\n,]+/)
+    .map((entry) => entry.trim())
+    .filter((entry) => entry !== '')
+}
+
+export function ezIpListText(list: string[] | null | undefined): string {
+  return (list ?? []).join('\n')
+}
+
+/**
+ * A spoof list as the API returns it: a JSON array stored as text. A stored
+ * value that is not a JSON array parses to null rather than crashing the
+ * form, so an old or hand-edited record still opens.
+ */
+export function parseEzStoredList(stored: string | null | undefined): string[] | null {
+  if (!stored) return null
+  try {
+    const parsed: unknown = JSON.parse(stored)
+    if (Array.isArray(parsed) && parsed.every((entry) => typeof entry === 'string')) {
+      return parsed as string[]
+    }
+  } catch {
+    // Not a JSON array; the form treats it as unset.
+  }
+  return null
 }
 
 /**

@@ -27,10 +27,13 @@ const Redacted = "[redacted]"
 // configuration, not credentials, and redacting them would make the audit trail
 // useless for diagnosing the single most common misconfiguration. The ESP key
 // is the opposite: a pre-shared secret, so "esp_key" is listed and redacted.
+// The OmniTunnel and EZTunnel keys are pre-shared secrets too, so
+// "omni_key" and "ez_key" are listed as well; without them an
+// operator-supplied key would sit in the audit log in plain text.
 var secretFieldFragments = []string{
 	"password", "passwd", "secret", "token", "authorization", "cookie",
 	"csrf", "credential", "private_key", "privatekey", "apikey", "api_key",
-	"session", "bearer", "esp_key",
+	"session", "bearer", "esp_key", "omni_key", "ez_key",
 }
 
 // IsSecretField reports whether a field name looks like it holds a secret.

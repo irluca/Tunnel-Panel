@@ -3,6 +3,7 @@ package tunnel
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"strings"
 
@@ -39,6 +40,9 @@ const tunnelColumns = `
 	LocalEndpoint, RemoteEndpoint, BindDevice,
 	Ttl, Tos, Mtu, IKey, OKey, EspKey, WssToken, WssPort,
 	OmniTransport, OmniKey, OmniPort, OmniConns,
+	EzTransport, EzKey, EzPort, EzHttpPath, EzXhttpMode, EzXhttpHost,
+	EzRawProfile, EzRawInterface, EzMirageUplink, EzMirageDownlink,
+	EzSpoofSources, EzMirageExpected,
 	HasInputChecksum, HasOutputChecksum, HasInputSequence, HasOutputSequence,
 	IsPathMtuDiscovery, IsIgnoreDf, FwMark, TxQueueLength,
 	HopLimit, EncapLimit, TrafficClass, FlowLabel,
@@ -82,6 +86,11 @@ func scanTunnel(scan func(...any) error) (model.Tunnel, error) {
 		wssPort                                             sql.NullInt64
 		omniTransport, omniKey                              sql.NullString
 		omniPort, omniConns                                 sql.NullInt64
+		ezTransport, ezKey, ezHttpPath, ezXhttpMode         sql.NullString
+		ezXhttpHost, ezRawProfile, ezRawInterface           sql.NullString
+		ezMirageUplink, ezMirageDownlink                    sql.NullString
+		ezSpoofSources, ezMirageExpected                    sql.NullString
+		ezPort                                              sql.NullInt64
 		lastAppliedDate, lastApplyError, note, tagsJson     sql.NullString
 		monitorTarget                                       sql.NullString
 		monitorInterval, monitorTimeout, monitorDegradedRtt sql.NullFloat64
@@ -101,6 +110,9 @@ func scanTunnel(scan func(...any) error) (model.Tunnel, error) {
 		&t.LocalEndpoint, &t.RemoteEndpoint, &bindDevice,
 		&t.Ttl, &t.Tos, &t.Mtu, &ikey, &okey, &espKey, &wssToken, &wssPort,
 		&omniTransport, &omniKey, &omniPort, &omniConns,
+		&ezTransport, &ezKey, &ezPort, &ezHttpPath, &ezXhttpMode, &ezXhttpHost,
+		&ezRawProfile, &ezRawInterface, &ezMirageUplink, &ezMirageDownlink,
+		&ezSpoofSources, &ezMirageExpected,
 		&hasInputChecksum, &hasOutputChecksum, &hasInputSequence, &hasOutputSequence,
 		&isPathMtuDiscovery, &isIgnoreDf, &fwMark, &txQueueLength,
 		&hopLimit, &encapLimit, &trafficClass, &flowLabel,
@@ -127,6 +139,18 @@ func scanTunnel(scan func(...any) error) (model.Tunnel, error) {
 	t.OmniKey = nullString(omniKey)
 	t.OmniPort = nullInt(omniPort)
 	t.OmniConns = nullInt(omniConns)
+	t.EzTransport = nullString(ezTransport)
+	t.EzKey = nullString(ezKey)
+	t.EzPort = nullInt(ezPort)
+	t.EzHttpPath = nullString(ezHttpPath)
+	t.EzXhttpMode = nullString(ezXhttpMode)
+	t.EzXhttpHost = nullString(ezXhttpHost)
+	t.EzRawProfile = nullString(ezRawProfile)
+	t.EzRawInterface = nullString(ezRawInterface)
+	t.EzMirageUplink = nullString(ezMirageUplink)
+	t.EzMirageDownlink = nullString(ezMirageDownlink)
+	t.EzSpoofSources = nullString(ezSpoofSources)
+	t.EzMirageExpected = nullString(ezMirageExpected)
 	t.HasInputChecksum = hasInputChecksum != 0
 	t.HasOutputChecksum = hasOutputChecksum != 0
 	t.HasInputSequence = hasInputSequence != 0
@@ -331,6 +355,9 @@ func (r *Repo) Insert(ctx context.Context, in validate.TunnelInput, isManaged, i
 			LocalEndpoint, RemoteEndpoint, BindDevice,
 			Ttl, Tos, Mtu, IKey, OKey, EspKey, WssToken, WssPort,
 			OmniTransport, OmniKey, OmniPort, OmniConns,
+			EzTransport, EzKey, EzPort, EzHttpPath, EzXhttpMode, EzXhttpHost,
+			EzRawProfile, EzRawInterface, EzMirageUplink, EzMirageDownlink,
+			EzSpoofSources, EzMirageExpected,
 			HasInputChecksum, HasOutputChecksum, HasInputSequence, HasOutputSequence,
 			IsPathMtuDiscovery, IsIgnoreDf, FwMark, TxQueueLength,
 			HopLimit, EncapLimit, TrafficClass, FlowLabel,
@@ -340,11 +367,14 @@ func (r *Repo) Insert(ctx context.Context, in validate.TunnelInput, isManaged, i
 			MonitorStateChangeSamples,
 			ApplyStatusID, CreatedDate, UpdatedDate, IsDeleted
 		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-		          ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
+		          ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
 		in.TunnelTypeID, in.TunnelSideID, in.PersistenceTypeID, in.InterfaceName, emptyToNull(in.DisplayName), in.TunnelNumber,
 		in.LocalEndpoint, in.RemoteEndpoint, emptyToNull(in.BindDevice),
 		in.Ttl, in.Tos, in.Mtu, in.IKey, in.OKey, in.EspKey, in.WssToken, in.WssPort,
 		in.OmniTransport, in.OmniKey, in.OmniPort, in.OmniConns,
+		in.EzTransport, in.EzKey, in.EzPort, in.EzHttpPath, in.EzXhttpMode, in.EzXhttpHost,
+		in.EzRawProfile, in.EzRawInterface, in.EzMirageUplink, in.EzMirageDownlink,
+		stringListToNull(in.EzSpoofSources), stringListToNull(in.EzMirageExpected),
 		boolInt(in.HasInputChecksum), boolInt(in.HasOutputChecksum),
 		boolInt(in.HasInputSequence), boolInt(in.HasOutputSequence),
 		boolInt(in.IsPathMtuDiscovery), boolInt(in.IsIgnoreDf), in.FwMark, in.TxQueueLength,
@@ -386,6 +416,9 @@ func (r *Repo) Update(ctx context.Context, id int64, in validate.TunnelInput, is
 			LocalEndpoint = ?, RemoteEndpoint = ?, BindDevice = ?,
 			Ttl = ?, Tos = ?, Mtu = ?, IKey = ?, OKey = ?, EspKey = ?, WssToken = ?, WssPort = ?,
 			OmniTransport = ?, OmniKey = ?, OmniPort = ?, OmniConns = ?,
+			EzTransport = ?, EzKey = ?, EzPort = ?, EzHttpPath = ?, EzXhttpMode = ?, EzXhttpHost = ?,
+			EzRawProfile = ?, EzRawInterface = ?, EzMirageUplink = ?, EzMirageDownlink = ?,
+			EzSpoofSources = ?, EzMirageExpected = ?,
 			HasInputChecksum = ?, HasOutputChecksum = ?, HasInputSequence = ?, HasOutputSequence = ?,
 			IsPathMtuDiscovery = ?, IsIgnoreDf = ?, FwMark = ?, TxQueueLength = ?,
 			HopLimit = ?, EncapLimit = ?, TrafficClass = ?, FlowLabel = ?,
@@ -399,6 +432,9 @@ func (r *Repo) Update(ctx context.Context, id int64, in validate.TunnelInput, is
 		in.LocalEndpoint, in.RemoteEndpoint, emptyToNull(in.BindDevice),
 		in.Ttl, in.Tos, in.Mtu, in.IKey, in.OKey, in.EspKey, in.WssToken, in.WssPort,
 		in.OmniTransport, in.OmniKey, in.OmniPort, in.OmniConns,
+		in.EzTransport, in.EzKey, in.EzPort, in.EzHttpPath, in.EzXhttpMode, in.EzXhttpHost,
+		in.EzRawProfile, in.EzRawInterface, in.EzMirageUplink, in.EzMirageDownlink,
+		stringListToNull(in.EzSpoofSources), stringListToNull(in.EzMirageExpected),
 		boolInt(in.HasInputChecksum), boolInt(in.HasOutputChecksum),
 		boolInt(in.HasInputSequence), boolInt(in.HasOutputSequence),
 		boolInt(in.IsPathMtuDiscovery), boolInt(in.IsIgnoreDf), in.FwMark, in.TxQueueLength,
@@ -705,6 +741,20 @@ func boolInt(b bool) int64 {
 		return 1
 	}
 	return 0
+}
+
+// stringListToNull renders a list of strings as a JSON array for storage, or
+// NULL when the list is absent or empty. The column holds the array as text;
+// readers parse it back with Unmarshal.
+func stringListToNull(v *[]string) any {
+	if v == nil || len(*v) == 0 {
+		return nil
+	}
+	b, err := json.Marshal(*v)
+	if err != nil {
+		return nil
+	}
+	return string(b)
 }
 
 // SetMonitorEnabled records the per-tunnel monitoring override. A nil value

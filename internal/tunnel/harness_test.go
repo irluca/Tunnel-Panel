@@ -30,6 +30,7 @@ const (
 	testSystemctlBin = "/bin/systemctl"
 	testModprobeBin  = "/sbin/modprobe"
 	testPingBin      = "/bin/ping"
+	testEzBin        = "/var/lib/gre-panel/bin/eztunnel"
 )
 
 // systemdSimulator answers systemctl calls by interpreting the unit files the
@@ -214,6 +215,11 @@ func (s *systemdSimulator) interpret(argv []string) error {
 		// it the same way: by creating the TUN it owns, with the MTU and
 		// addresses it configures, and bringing it up.
 		return s.interpretOmni(ctx, argv)
+	case "eztunnel":
+		// The EZTunnel unit runs the eztunnel binary with --config. The
+		// simulator models it the same way, reading the TUN name, MTU and
+		// addresses back out of the JSON config the panel wrote.
+		return s.interpretEz(ctx, argv)
 	case "ip":
 	default:
 		return fmt.Errorf("the simulator does not run %q", argv[0])
@@ -521,7 +527,7 @@ func newHarness(t *testing.T) *harness {
 
 	repo := NewRepo(database)
 	persistStore := persist.NewStore(systemdDir, networkdDir, testSystemctlBin, runner)
-	renderer := persist.NewRenderer(testIPBin, testModprobeBin, testPingBin)
+	renderer := persist.NewRenderer(testIPBin, testModprobeBin, testPingBin).WithEzBin(testEzBin).WithEzConfigDir(filepath.Join(dir, "eztunnel"))
 
 	service := New(Deps{
 		Repo:          repo,
@@ -531,10 +537,11 @@ func newHarness(t *testing.T) *harness {
 		Store:         persistStore,
 		Alloc:         alloc.New(repo, links, store),
 		Validator:     validate.New(links, repo.ForValidation(), store, "/api/v1/reconcile/adopt"),
-		Guard:         safety.New(links, systemdDir, networkdDir),
+		Guard:         safety.New(links, systemdDir, networkdDir).WithEzConfigDir(filepath.Join(dir, "eztunnel")),
 		Settings:      store,
 		Log:           slog.New(slog.NewTextHandler(io.Discard, nil)),
 		BinaryEnsurer: fakeBinaryEnsurer{},
+		EzBinaryEnsurer: fakeEzBinaryEnsurer{},
 		IPBin:         testIPBin,
 		SystemctlBin:  testSystemctlBin,
 	})
@@ -553,6 +560,15 @@ type fakeBinaryEnsurer struct{}
 
 func (fakeBinaryEnsurer) Ensure(ctx context.Context) (string, error) {
 	return "/var/lib/gre-panel/bin/omnitun", nil
+}
+
+// fakeEzBinaryEnsurer stands in for the eztunnel binary manager the same
+// way: the binary is already there, so creation never has to download
+// anything, and the unit still points at the real binary path.
+type fakeEzBinaryEnsurer struct{}
+
+func (fakeEzBinaryEnsurer) Ensure(ctx context.Context) (string, error) {
+	return "/var/lib/gre-panel/bin/eztunnel", nil
 }
 
 // request builds a complete create request against the simulated host.
@@ -715,6 +731,43 @@ func (s *systemdSimulator) interpretOmni(ctx context.Context, argv []string) err
 	}
 	for _, addr := range addresses {
 		if err := s.links.AddAddress(ctx, spec.Name, addr); err != nil {
+			return err
+		}
+	}
+	return s.links.SetUp(ctx, spec.Name)
+}
+
+// interpretEz models `eztunnel --config <path>` by creating the TUN the
+// binary owns, with the MTU and addresses the config carries, and bringing
+// it up. The transport, the key and the port are the binary's business,
+// not the kernel's, so they are parsed and ignored here — except that a
+// config the panel cannot parse is a binary that refuses to start, which
+// the simulator models as a failure.
+func (s *systemdSimulator) interpretEz(ctx context.Context, argv []string) error {
+	if len(argv) != 3 || argv[1] != "--config" {
+		return fmt.Errorf("the simulator does not run %v", argv)
+	}
+	raw, err := os.ReadFile(argv[2])
+	if err != nil {
+		return fmt.Errorf("reading the eztunnel config %s: %w", argv[2], err)
+	}
+	cfg, err := link.ParseEzConfig(raw)
+	if err != nil {
+		return fmt.Errorf("the eztunnel config %s does not parse: %w", argv[2], err)
+	}
+	if cfg.TunName == "" {
+		return fmt.Errorf("the eztunnel config %s names no TUN", argv[2])
+	}
+	spec := link.TunnelSpec{Kind: link.KindEZTunnel, Name: cfg.TunName, Mtu: cfg.TunMtu}
+	if err := s.links.Create(ctx, spec); err != nil {
+		return err
+	}
+	if cfg.TunAddress != "" {
+		ip := net.ParseIP(cfg.TunAddress)
+		if ip == nil {
+			return fmt.Errorf("invalid eztunnel TUN address: %s", cfg.TunAddress)
+		}
+		if err := s.links.AddAddress(ctx, spec.Name, link.Address{Address: ip.String(), PrefixLength: 30}); err != nil {
 			return err
 		}
 	}

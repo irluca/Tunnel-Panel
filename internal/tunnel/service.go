@@ -12,6 +12,7 @@ package tunnel
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/netip"
@@ -73,6 +74,9 @@ type Deps struct {
 	// A test that exercises tunnels alone leaves it nil and never creates
 	// an OmniTunnel tunnel.
 	BinaryEnsurer BinaryEnsurer
+	// EzBinaryEnsurer downloads and verifies the eztunnel binary. The same
+	// rule as above, for EZTunnel tunnels.
+	EzBinaryEnsurer BinaryEnsurer
 }
 
 // BinaryEnsurer is what the service needs from the omnitun binary manager:
@@ -101,6 +105,9 @@ type Service struct {
 
 	// binaryEnsurer downloads and verifies the omnitun binary.
 	binaryEnsurer BinaryEnsurer
+
+	// ezBinaryEnsurer downloads and verifies the eztunnel binary.
+	ezBinaryEnsurer BinaryEnsurer
 
 	idempotency *idempotencyCache
 
@@ -141,6 +148,7 @@ func New(d Deps) *Service {
 		prober:        d.PeerProber,
 		mutation:      mutation,
 		binaryEnsurer: d.BinaryEnsurer,
+		ezBinaryEnsurer: d.EzBinaryEnsurer,
 		planner: &planner{
 			renderer:      d.Renderer,
 			store:         d.Store,
@@ -362,6 +370,8 @@ func (s *Service) ApplyDefaults(ctx context.Context, in *validate.TunnelInput) e
 			in.Mtu = validate.EspDefaultMtu
 		} else if in.TunnelTypeID == model.TunnelTypeOmniTunnel {
 			in.Mtu = link.OmniDefaultMtu
+		} else if in.TunnelTypeID == model.TunnelTypeEZTunnel {
+			in.Mtu = link.EzDefaultMtu
 		} else {
 			in.Mtu = s.settings.Int("tunnel.default_mtu")
 		}
@@ -374,9 +384,9 @@ func (s *Service) ApplyDefaults(ctx context.Context, in *validate.TunnelInput) e
 	}
 	// The default key is applied only when creating. On an update, no key is a
 	// deliberate instruction — an operator clearing the keys means it — and
-	// putting the default back would silently undo it. An ESP tunnel has no
-	// GRE keys at all, so the default never applies to one.
-	if in.TunnelID == 0 && in.TunnelTypeID != model.TunnelTypeESP && in.IKey == nil && in.OKey == nil {
+	// putting the default back would silently undo it. An ESP or EZTunnel
+	// tunnel has no GRE keys at all, so the default never applies to one.
+	if in.TunnelID == 0 && in.TunnelTypeID != model.TunnelTypeESP && in.TunnelTypeID != model.TunnelTypeEZTunnel && in.IKey == nil && in.OKey == nil {
 		if key := s.settings.IntPtr("tunnel.default_key"); key != nil {
 			value := *key
 			in.IKey = &value
@@ -436,6 +446,30 @@ func (s *Service) ApplyDefaults(ctx context.Context, in *validate.TunnelInput) e
 		if link.OmniTransportHasConns(transport) && in.OmniConns == nil {
 			conns := int64(link.OmniDefaultConns)
 			in.OmniConns = &conns
+		}
+	}
+
+	// An EZTunnel tunnel's key is generated the same way. Its port is not
+	// defaulted: the operator enters it. Mirage's expected sources default
+	// to its tested spoof pool when the operator leaves them empty: the far
+	// end is expected to answer from the addresses the tunnel sends from.
+	// All are creation-only: on an update the stored values stand unless
+	// the operator supplies new ones.
+	if in.TunnelID == 0 && in.TunnelTypeID == model.TunnelTypeEZTunnel {
+		if in.EzKey == nil || strings.TrimSpace(*in.EzKey) == "" {
+			key, err := link.GenerateEzKey()
+			if err != nil {
+				return err
+			}
+			in.EzKey = &key
+		}
+		transport := ""
+		if in.EzTransport != nil {
+			transport = strings.TrimSpace(*in.EzTransport)
+		}
+		if link.EzTransportIsMirage(transport) && in.EzMirageExpected == nil && in.EzSpoofSources != nil {
+			expected := append([]string(nil), *in.EzSpoofSources...)
+			in.EzMirageExpected = &expected
 		}
 	}
 
@@ -816,6 +850,15 @@ func (s *Service) Create(ctx context.Context, req Request) (Result, error) {
 		}
 	}
 
+	// An EZTunnel tunnel runs a binary the panel installs itself, the same
+	// way — and its config file is written by the plan, so the binary has
+	// to be there before the unit is written.
+	if rec.TunnelTypeID == model.TunnelTypeEZTunnel {
+		if _, err := s.ensureEzBinary(ctx); err != nil {
+			return Result{}, err
+		}
+	}
+
 	plan := s.planner.PlanCreate(ctx, rec, s.KeepaliveFor(rec, req.KeepaliveEnabled), false)
 	plan.Warnings = validation.Warnings
 
@@ -840,6 +883,17 @@ func (s *Service) ensureOmniBinary(ctx context.Context) (string, error) {
 		return "", i18n.Errorf(ctx, "the omnitun binary cannot be installed on this panel: no binary manager is configured")
 	}
 	return s.binaryEnsurer.Ensure(ctx)
+}
+
+// ensureEzBinary returns the path to a verified eztunnel binary, downloading
+// it when it is missing. Without an ensurer the panel cannot install one, so
+// creating an EZTunnel tunnel is refused rather than writing a unit that
+// points at a binary that is not there.
+func (s *Service) ensureEzBinary(ctx context.Context) (string, error) {
+	if s.ezBinaryEnsurer == nil {
+		return "", i18n.Errorf(ctx, "the eztunnel binary cannot be installed on this panel: no binary manager is configured")
+	}
+	return s.ezBinaryEnsurer.Ensure(ctx)
 }
 
 // ---------------------------------------------------------------- update
@@ -902,6 +956,14 @@ func (s *Service) Update(ctx context.Context, id int64, req Request) (Result, er
 	// to exist and match its pinned checksum before the unit is written.
 	if desired.TunnelTypeID == model.TunnelTypeOmniTunnel {
 		if _, err := s.ensureOmniBinary(ctx); err != nil {
+			return Result{}, err
+		}
+	}
+
+	// An EZTunnel tunnel runs a binary the panel installs itself, the same
+	// way.
+	if desired.TunnelTypeID == model.TunnelTypeEZTunnel {
+		if _, err := s.ensureEzBinary(ctx); err != nil {
 			return Result{}, err
 		}
 	}
@@ -1005,6 +1067,22 @@ func mergedInput(rec Record) validate.TunnelInput {
 		OmniKey:       rec.OmniKey,
 		OmniPort:      rec.OmniPort,
 		OmniConns:     rec.OmniConns,
+		// And the same, for the EZTunnel transport, key, port and
+		// per-transport settings. The spoof lists are stored as JSON text
+		// and parsed back into lists here, so an unrelated edit never
+		// rewrites them to NULL.
+		EzTransport:      rec.EzTransport,
+		EzKey:            rec.EzKey,
+		EzPort:           rec.EzPort,
+		EzHttpPath:       rec.EzHttpPath,
+		EzXhttpMode:      rec.EzXhttpMode,
+		EzXhttpHost:      rec.EzXhttpHost,
+		EzRawProfile:     rec.EzRawProfile,
+		EzRawInterface:   rec.EzRawInterface,
+		EzMirageUplink:   rec.EzMirageUplink,
+		EzMirageDownlink: rec.EzMirageDownlink,
+		EzSpoofSources:   jsonStringList(rec.EzSpoofSources),
+		EzMirageExpected: jsonStringList(rec.EzMirageExpected),
 
 		HasInputChecksum:  rec.HasInputChecksum,
 		HasOutputChecksum: rec.HasOutputChecksum,
@@ -1040,6 +1118,20 @@ func mergedInput(rec Record) validate.TunnelInput {
 		})
 	}
 	return in
+}
+
+// jsonStringList parses a stored JSON array of strings back into a list.
+// A NULL or empty column, or text that is not a JSON array, parses to nil,
+// which is the same absence the repository wrote.
+func jsonStringList(s *string) *[]string {
+	if s == nil || strings.TrimSpace(*s) == "" {
+		return nil
+	}
+	var list []string
+	if err := json.Unmarshal([]byte(*s), &list); err != nil {
+		return nil
+	}
+	return &list
 }
 
 // Switch changes only the carrier of a tunnel — GRE to ESP or ESP to GRE —

@@ -123,6 +123,23 @@ type tunnelPatch struct {
 	OmniPort      nullableInt `json:"omni_port,omitempty"`
 	OmniConns     nullableInt `json:"omni_conns,omitempty"`
 
+	// EzTransport is the eztunnel transport. EzKey is the tunnel key;
+	// setting it rotates the key. EzPort is the data port the listening
+	// side serves on. The rest are the per-transport settings; the spoof
+	// lists are lists of IP addresses.
+	EzTransport      *string   `json:"ez_transport,omitempty"`
+	EzKey            *string   `json:"ez_key,omitempty"`
+	EzPort           nullableInt `json:"ez_port,omitempty"`
+	EzHttpPath       *string   `json:"ez_http_path,omitempty"`
+	EzXhttpMode      *string   `json:"ez_xhttp_mode,omitempty"`
+	EzXhttpHost      *string   `json:"ez_xhttp_host,omitempty"`
+	EzRawProfile     *string   `json:"ez_raw_profile,omitempty"`
+	EzRawInterface   *string   `json:"ez_raw_interface,omitempty"`
+	EzMirageUplink   *string   `json:"ez_mirage_uplink,omitempty"`
+	EzMirageDownlink *string   `json:"ez_mirage_downlink,omitempty"`
+	EzSpoofSources   *[]string `json:"ez_spoof_sources,omitempty"`
+	EzMirageExpected *[]string `json:"ez_mirage_expected,omitempty"`
+
 	// WssToken is the shared WSS token. Setting it rotates the token; the
 	// value is never returned by the API.
 	WssToken *string `json:"wss_token,omitempty"`
@@ -226,6 +243,40 @@ func (p tunnelPatch) applyTo(in *validate.TunnelInput) {
 	}
 	setNullable(&in.OmniPort, p.OmniPort)
 	setNullable(&in.OmniConns, p.OmniConns)
+	if p.EzTransport != nil {
+		in.EzTransport = p.EzTransport
+	}
+	if p.EzKey != nil {
+		in.EzKey = p.EzKey
+	}
+	setNullable(&in.EzPort, p.EzPort)
+	if p.EzHttpPath != nil {
+		in.EzHttpPath = p.EzHttpPath
+	}
+	if p.EzXhttpMode != nil {
+		in.EzXhttpMode = p.EzXhttpMode
+	}
+	if p.EzXhttpHost != nil {
+		in.EzXhttpHost = p.EzXhttpHost
+	}
+	if p.EzRawProfile != nil {
+		in.EzRawProfile = p.EzRawProfile
+	}
+	if p.EzRawInterface != nil {
+		in.EzRawInterface = p.EzRawInterface
+	}
+	if p.EzMirageUplink != nil {
+		in.EzMirageUplink = p.EzMirageUplink
+	}
+	if p.EzMirageDownlink != nil {
+		in.EzMirageDownlink = p.EzMirageDownlink
+	}
+	if p.EzSpoofSources != nil {
+		in.EzSpoofSources = p.EzSpoofSources
+	}
+	if p.EzMirageExpected != nil {
+		in.EzMirageExpected = p.EzMirageExpected
+	}
 	setNullable(&in.WssPort, p.WssPort)
 
 	setBool(&in.HasInputChecksum, p.HasInputChecksum)

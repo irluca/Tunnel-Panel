@@ -91,6 +91,23 @@ type Payload struct {
 	OmniKey       *string `json:"omni_key,omitempty"`
 	OmniPort      *int64  `json:"omni_port,omitempty"`
 	OmniConns     *int64  `json:"omni_conns,omitempty"`
+	// EzTransport is the eztunnel transport of an EZTunnel tunnel. The key
+	// must be identical on both ends or the far end refuses the connection,
+	// so it travels in the code; the port and the per-transport settings
+	// travel with it, including the tested spoof sources of a Mirage
+	// tunnel.
+	EzTransport      *string   `json:"ez_transport,omitempty"`
+	EzKey            *string   `json:"ez_key,omitempty"`
+	EzPort           *int64    `json:"ez_port,omitempty"`
+	EzHttpPath       *string   `json:"ez_http_path,omitempty"`
+	EzXhttpMode      *string   `json:"ez_xhttp_mode,omitempty"`
+	EzXhttpHost      *string   `json:"ez_xhttp_host,omitempty"`
+	EzRawProfile     *string   `json:"ez_raw_profile,omitempty"`
+	EzRawInterface   *string   `json:"ez_raw_interface,omitempty"`
+	EzMirageUplink   *string   `json:"ez_mirage_uplink,omitempty"`
+	EzMirageDownlink *string   `json:"ez_mirage_downlink,omitempty"`
+	EzSpoofSources   *[]string `json:"ez_spoof_sources,omitempty"`
+	EzMirageExpected *[]string `json:"ez_mirage_expected,omitempty"`
 
 	HasInputChecksum  bool `json:"icsum,omitempty"`
 	HasOutputChecksum bool `json:"ocsum,omitempty"`
@@ -262,6 +279,18 @@ func (p Payload) Flipped() validate.TunnelInput {
 		OmniKey:        p.OmniKey,
 		OmniPort:       p.OmniPort,
 		OmniConns:      p.OmniConns,
+		EzTransport:    p.EzTransport,
+		EzKey:          p.EzKey,
+		EzPort:         p.EzPort,
+		EzHttpPath:     p.EzHttpPath,
+		EzXhttpMode:    p.EzXhttpMode,
+		EzXhttpHost:    p.EzXhttpHost,
+		EzRawProfile:   p.EzRawProfile,
+		EzRawInterface: p.EzRawInterface,
+		EzMirageUplink: p.EzMirageUplink,
+		EzMirageDownlink: p.EzMirageDownlink,
+		EzSpoofSources:   p.EzSpoofSources,
+		EzMirageExpected: p.EzMirageExpected,
 
 		HasInputChecksum:  p.HasInputChecksum,
 		HasOutputChecksum: p.HasOutputChecksum,
@@ -319,6 +348,9 @@ type Summary struct {
 	OmniKeyPresent  bool   `json:"omni_key_present,omitempty"`
 	OmniPort        *int64 `json:"omni_port,omitempty"`
 	OmniConns       *int64 `json:"omni_conns,omitempty"`
+	EzTransport     string `json:"ez_transport,omitempty"`
+	EzKeyPresent    bool   `json:"ez_key_present,omitempty"`
+	EzPort          *int64 `json:"ez_port,omitempty"`
 }
 
 // derefString returns the value a pointer holds, or "" when it holds none.
@@ -350,5 +382,8 @@ func (p Payload) Summarise() Summary {
 		OmniKeyPresent:  p.OmniKey != nil,
 		OmniPort:        p.OmniPort,
 		OmniConns:       p.OmniConns,
+		EzTransport:     derefString(p.EzTransport),
+		EzKeyPresent:    p.EzKey != nil,
+		EzPort:          p.EzPort,
 	}
 }

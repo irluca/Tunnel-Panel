@@ -40,6 +40,10 @@ const (
 	// interface is a TUN the omnitun binary creates, not a kernel
 	// interface; see internal/link/omnitunnel.go and the omnitunnel unit.
 	KindOmniTunnel = "omnitunnel"
+	// KindEZTunnel is the panel's name for an EZTunnel tunnel. The
+	// interface is a TUN the eztunnel binary creates, not a kernel
+	// interface; see internal/link/eztunnel.go and the eztunnel unit.
+	KindEZTunnel = "eztunnel"
 )
 
 // Manager implementation names, reported through /system/capabilities.
@@ -62,23 +66,24 @@ var (
 
 // TunnelKinds lists every tunnel kind the panel understands, in a stable order.
 func TunnelKinds() []string {
-	return []string{KindGRE, KindGRETAP, KindIP6GRE, KindIP6GRETAP, KindESP, KindGREWSS, KindOmniTunnel}
+	return []string{KindGRE, KindGRETAP, KindIP6GRE, KindIP6GRETAP, KindESP, KindGREWSS, KindOmniTunnel, KindEZTunnel}
 }
 
 // IsTunRelayKind reports whether a tunnel kind is carried by a userspace
-// relay that owns a TUN interface — GRE-over-WSS and OmniTunnel. Both kinds
-// have no tunnel attributes in the kernel: the endpoints, keys and token
-// live in the relay. An interface of either kind is the same thing to a
-// reader, so verification treats them as matching each other; the interface
-// name is unique per tunnel, so this cannot confuse two tunnels.
+// relay that owns a TUN interface — GRE-over-WSS, OmniTunnel and EZTunnel.
+// All three kinds have no tunnel attributes in the kernel: the endpoints,
+// keys and token live in the relay. An interface of any of them is the
+// same thing to a reader, so verification treats them as matching each
+// other; the interface name is unique per tunnel, so this cannot confuse
+// two tunnels.
 func IsTunRelayKind(kind string) bool {
-	return kind == KindGREWSS || kind == KindOmniTunnel
+	return kind == KindGREWSS || kind == KindOmniTunnel || kind == KindEZTunnel
 }
 
 // IsTunnelKind reports whether a kind names a tunnel this panel manages.
 func IsTunnelKind(kind string) bool {
 	switch kind {
-	case KindGRE, KindGRETAP, KindIP6GRE, KindIP6GRETAP, KindESP, KindGREWSS, KindOmniTunnel:
+	case KindGRE, KindGRETAP, KindIP6GRE, KindIP6GRETAP, KindESP, KindGREWSS, KindOmniTunnel, KindEZTunnel:
 		return true
 	}
 	return false
@@ -362,6 +367,33 @@ type TunnelSpec struct {
 	OmniPort      int
 	OmniConns     int
 	OmniMode      string
+
+	// EZTunnel tunnels only. EzMode is "server" on side A (it listens) and
+	// "client" on side B (it dials); EzTransport is one of the fifteen
+	// transports eztunnel runs; EzKey is the tunnel key in display form
+	// (five groups of five symbols); EzPort is the data port the listening
+	// side serves on and the dialling side connects to (asked from the
+	// operator, never defaulted); EzHttpPath is the HTTP path of the HTTP
+	// and WebSocket carriers; EzXhttpMode and EzXhttpHost are the XHTTP
+	// mode and host override; EzRawProfile and EzRawInterface are the
+	// outer packet profile and interface of the raw carriers; EzMirageUplink
+	// and EzMirageDownlink are Mirage's directional profiles, and
+	// EzSpoofSources and EzMirageExpected are its tested spoof source pool
+	// and receive-source allowlist. The key is a credential and is never
+	// serialised, for the same reason as the ESP key above.
+	EzMode           string
+	EzTransport      string
+	EzKey            string `json:"-"`
+	EzPort           int
+	EzHttpPath       string
+	EzXhttpMode      string
+	EzXhttpHost      string
+	EzRawProfile     string
+	EzRawInterface   string
+	EzMirageUplink   string
+	EzMirageDownlink string
+	EzSpoofSources   []string
+	EzMirageExpected []string
 }
 
 // Route is one entry of the kernel routing table. The panel reads routes to

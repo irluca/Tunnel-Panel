@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/drs/gre-panel/internal/link"
 	"github.com/drs/gre-panel/internal/model"
 )
 
@@ -259,6 +260,70 @@ func TestCodeStaysShortEnoughToCopy(t *testing.T) {
 	}
 	if len(code) > 400 {
 		t.Fatalf("the pairing code is %d characters, which is too long to copy comfortably", len(code))
+	}
+}
+
+func TestEzKeyPortAndListsSurviveTheRoundTrip(t *testing.T) {
+	key, err := link.GenerateEzKey()
+	if err != nil {
+		t.Fatalf("generating an EZTunnel key failed: %v", err)
+	}
+	port := int64(8443)
+	transport := "mirage"
+	httpPath := "/tunnel"
+	rawProfile := "tcp"
+	rawInterface := "eth0"
+	uplink := "tcp"
+	downlink := "udp"
+	sources := []string{"203.0.113.7", "198.51.100.23"}
+	expected := []string{"203.0.113.7"}
+	p := samplePayload()
+	p.TunnelTypeID = model.TunnelTypeEZTunnel
+	p.EzTransport = &transport
+	p.EzKey = &key
+	p.EzPort = &port
+	p.EzHttpPath = &httpPath
+	p.EzRawProfile = &rawProfile
+	p.EzRawInterface = &rawInterface
+	p.EzMirageUplink = &uplink
+	p.EzMirageDownlink = &downlink
+	p.EzSpoofSources = &sources
+	p.EzMirageExpected = &expected
+
+	code, err := Encode(p)
+	if err != nil {
+		t.Fatalf("encoding failed: %v", err)
+	}
+	decoded, err := Decode(code)
+	if err != nil {
+		t.Fatalf("decoding failed: %v", err)
+	}
+	if decoded.EzTransport == nil || *decoded.EzTransport != transport {
+		t.Fatalf("the EZTunnel transport did not survive: %v", decoded.EzTransport)
+	}
+	if decoded.EzKey == nil || *decoded.EzKey != key {
+		t.Fatalf("the EZTunnel key did not survive: %v", decoded.EzKey)
+	}
+	if decoded.EzPort == nil || *decoded.EzPort != port {
+		t.Fatalf("the EZTunnel port did not survive: %v", decoded.EzPort)
+	}
+	if decoded.EzSpoofSources == nil || len(*decoded.EzSpoofSources) != 2 || (*decoded.EzSpoofSources)[0] != "203.0.113.7" {
+		t.Fatalf("the spoof sources did not survive: %v", decoded.EzSpoofSources)
+	}
+	if decoded.EzMirageExpected == nil || len(*decoded.EzMirageExpected) != 1 {
+		t.Fatalf("the expected sources did not survive: %v", decoded.EzMirageExpected)
+	}
+	in := decoded.Flipped()
+	if in.EzKey == nil || *in.EzKey != key {
+		t.Fatalf("the flipped tunnel lost the EZTunnel key: %v", in.EzKey)
+	}
+	if in.EzSpoofSources == nil || len(*in.EzSpoofSources) != 2 {
+		t.Fatalf("the flipped tunnel lost the spoof sources: %v", in.EzSpoofSources)
+	}
+	// The summary never shows the key itself, only that one travelled.
+	summary := decoded.Summarise()
+	if summary.EzTransport != transport || !summary.EzKeyPresent || summary.EzPort == nil || *summary.EzPort != port {
+		t.Fatalf("the summary does not describe the EZTunnel tunnel: %+v", summary)
 	}
 }
 

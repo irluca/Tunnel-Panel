@@ -643,8 +643,12 @@ func normaliseKind(d ipLink) string {
 			return KindESP
 		}
 		if d.LinkInfo.InfoKind == "tun" {
-			// A TUN interface is the relay's end of a GRE-over-WSS
-			// tunnel; the kernel has no gre-wss type of its own.
+			// A TUN interface is the relay's end of a TUN-relay tunnel —
+			// GRE-over-WSS, OmniTunnel or EZTunnel; the kernel cannot tell
+			// them apart. It reads as GRE-over-WSS here and the verify
+			// treats the TUN-relay kinds as matching each other, so the
+			// distinction is made from the panel's own record, not the
+			// kernel.
 			return KindGREWSS
 		}
 		return d.LinkInfo.InfoKind

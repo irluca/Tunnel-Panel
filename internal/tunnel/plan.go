@@ -2,6 +2,7 @@ package tunnel
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -54,6 +55,9 @@ const (
 	FileKeepaliveUnit = "systemd_keepalive_unit"
 	FileNetdev        = "networkd_netdev"
 	FileNetwork       = "networkd_network"
+	// FileEzConfig is the EZTunnel JSON config the panel renders. It holds
+	// the tunnel key, so it is written 0600 like the ESP unit.
+	FileEzConfig = "eztunnel_config"
 )
 
 // Step is one operation of a plan. Exactly one of the kind-specific fields is
@@ -264,6 +268,55 @@ func SpecOf(rec Record) link.TunnelSpec {
 			spec.OmniConns = int(*rec.OmniConns)
 		}
 	}
+	if rec.TunnelTypeID == model.TunnelTypeEZTunnel {
+		// Side A is the server (it listens), side B is the client (it
+		// dials). The rule is fixed so the two ends agree without another
+		// field to keep in sync, and server_dials stays false.
+		if rec.TunnelSideID == model.TunnelSideB {
+			spec.EzMode = link.EzModeClient
+		} else {
+			spec.EzMode = link.EzModeServer
+		}
+		if rec.EzTransport != nil {
+			spec.EzTransport = *rec.EzTransport
+		}
+		if rec.EzKey != nil {
+			spec.EzKey = *rec.EzKey
+		}
+		// The port is required at creation for every transport, so a
+		// stored record has one. A record that somehow has none leaves
+		// the port at zero, and the binary refuses to start on it.
+		if rec.EzPort != nil {
+			spec.EzPort = int(*rec.EzPort)
+		}
+		if rec.EzHttpPath != nil {
+			spec.EzHttpPath = *rec.EzHttpPath
+		}
+		if rec.EzXhttpMode != nil {
+			spec.EzXhttpMode = *rec.EzXhttpMode
+		}
+		if rec.EzXhttpHost != nil {
+			spec.EzXhttpHost = *rec.EzXhttpHost
+		}
+		if rec.EzRawProfile != nil {
+			spec.EzRawProfile = *rec.EzRawProfile
+		}
+		if rec.EzRawInterface != nil {
+			spec.EzRawInterface = *rec.EzRawInterface
+		}
+		if rec.EzMirageUplink != nil {
+			spec.EzMirageUplink = *rec.EzMirageUplink
+		}
+		if rec.EzMirageDownlink != nil {
+			spec.EzMirageDownlink = *rec.EzMirageDownlink
+		}
+		if list := jsonStringList(rec.EzSpoofSources); list != nil {
+			spec.EzSpoofSources = *list
+		}
+		if list := jsonStringList(rec.EzMirageExpected); list != nil {
+			spec.EzMirageExpected = *list
+		}
+	}
 	return spec
 }
 
@@ -349,6 +402,18 @@ func recordFromInput(in validate.TunnelInput) model.Tunnel {
 		OmniKey:           in.OmniKey,
 		OmniPort:          in.OmniPort,
 		OmniConns:         in.OmniConns,
+		EzTransport:       in.EzTransport,
+		EzKey:             in.EzKey,
+		EzPort:            in.EzPort,
+		EzHttpPath:        in.EzHttpPath,
+		EzXhttpMode:       in.EzXhttpMode,
+		EzXhttpHost:       in.EzXhttpHost,
+		EzRawProfile:      in.EzRawProfile,
+		EzRawInterface:    in.EzRawInterface,
+		EzMirageUplink:    in.EzMirageUplink,
+		EzMirageDownlink:  in.EzMirageDownlink,
+		EzSpoofSources:    stringListJSON(in.EzSpoofSources),
+		EzMirageExpected:  stringListJSON(in.EzMirageExpected),
 
 		HasInputChecksum:  in.HasInputChecksum,
 		HasOutputChecksum: in.HasOutputChecksum,
@@ -415,6 +480,20 @@ func stringPtr(s string) *string {
 	if strings.TrimSpace(s) == "" {
 		return nil
 	}
+	return &s
+}
+
+// stringListJSON renders a list of strings as the JSON array the repository
+// stores, or nil when the list is absent or empty.
+func stringListJSON(v *[]string) *string {
+	if v == nil || len(*v) == 0 {
+		return nil
+	}
+	b, err := json.Marshal(*v)
+	if err != nil {
+		return nil
+	}
+	s := string(b)
 	return &s
 }
 
@@ -496,6 +575,29 @@ func (p *planner) planSystemdCreate(ctx context.Context, plan *Plan, rec Record,
 	unit := persist.UnitName(name)
 	unitPath := p.store.UnitPath(name)
 	body := p.renderer.Unit(spec, addresses)
+
+	// An EZTunnel tunnel's config is written before the unit, 0600: the
+	// unit's ExecStart points at it, and it holds the tunnel key. The
+	// render depends on state validation and key generation already
+	// established, so a render failure here means a corrupt record; the
+	// step is omitted and the unit start then fails loudly with the
+	// binary's own error, rather than the plan pretending the config
+	// exists.
+	if spec.Kind == link.KindEZTunnel {
+		configPath := p.renderer.EzConfigPath(name)
+		if config, err := link.EzConfigJSON(spec, addresses); err == nil {
+			plan.AddFile(FileEzConfig, configPath, string(config))
+			plan.Add(Step{
+				Kind: StepFileWrite, Description: i18n.T(ctx, "write the EZTunnel config %s", configPath),
+				Path: configPath, Content: string(config), FileKind: FileEzConfig,
+				Interface: name, Takeover: takeover, Mode: persist.SecretFileMode,
+			})
+			plan.AddRollback(Step{
+				Kind: StepFileRemove, Description: i18n.T(ctx, "remove the EZTunnel config %s", configPath),
+				Path: configPath, Interface: name, Takeover: takeover, Tolerate: true,
+			})
+		}
+	}
 
 	plan.AddFile(FileSystemdUnit, unitPath, body)
 	plan.Add(Step{
@@ -721,6 +823,16 @@ func (p *planner) PlanDelete(ctx context.Context, rec Record, hadKeepalive, take
 			Kind: StepFileRemove, Description: i18n.T(ctx, "remove %s", unit),
 			Path: p.store.UnitPath(name), Unit: unit, Interface: name, Takeover: takeover, Tolerate: true,
 		})
+		// An EZTunnel tunnel leaves its config file behind too, and it
+		// holds the tunnel key: deleting the tunnel deletes the key's
+		// only copy on this host.
+		if rec.TunnelTypeID == model.TunnelTypeEZTunnel {
+			configPath := p.renderer.EzConfigPath(name)
+			plan.Add(Step{
+				Kind: StepFileRemove, Description: i18n.T(ctx, "remove the EZTunnel config %s", configPath),
+				Path: configPath, Interface: name, Takeover: takeover, Tolerate: true,
+			})
+		}
 		plan.Add(Step{
 			Kind: StepDaemonReload, Description: i18n.T(ctx, "reload the systemd unit files"),
 			Argv: persist.DaemonReloadArgs(p.systemctlBin), Tolerate: true,
@@ -806,6 +918,22 @@ func DiffTunnel(current Record, desired validate.TunnelInput) []Diff {
 	add("tx_queue_length", optInt(current.TxQueueLength), optInt(desired.TxQueueLength))
 	add("hop_limit", optInt(current.HopLimit), optInt(desired.HopLimit))
 	add("encap_limit", optInt(current.EncapLimit), optInt(desired.EncapLimit))
+	// The EZTunnel fields. Unlike the ESP key, the WSS token and the
+	// OmniTunnel fields — which DiffTunnel does not compare, a pre-existing
+	// gap — an EZTunnel change is detected here: the config file and the
+	// unit must be rewritten, so the change needs a recreate, and a silent
+	// drop would leave the running tunnel on the old transport.
+	add("ez_transport", derefString(current.EzTransport), derefString(desired.EzTransport))
+	add("ez_port", optInt(current.EzPort), optInt(desired.EzPort))
+	add("ez_http_path", derefString(current.EzHttpPath), derefString(desired.EzHttpPath))
+	add("ez_xhttp_mode", derefString(current.EzXhttpMode), derefString(desired.EzXhttpMode))
+	add("ez_xhttp_host", derefString(current.EzXhttpHost), derefString(desired.EzXhttpHost))
+	add("ez_raw_profile", derefString(current.EzRawProfile), derefString(desired.EzRawProfile))
+	add("ez_raw_interface", derefString(current.EzRawInterface), derefString(desired.EzRawInterface))
+	add("ez_mirage_uplink", derefString(current.EzMirageUplink), derefString(desired.EzMirageUplink))
+	add("ez_mirage_downlink", derefString(current.EzMirageDownlink), derefString(desired.EzMirageDownlink))
+	add("ez_spoof_sources", derefString(current.EzSpoofSources), derefString(stringListJSON(desired.EzSpoofSources)))
+	add("ez_mirage_expected", derefString(current.EzMirageExpected), derefString(stringListJSON(desired.EzMirageExpected)))
 	add("addresses", addressText(AddressesOf(current)), addressText(AddressesOfInput(desired)))
 	add("is_enabled", boolText(current.IsEnabled), boolText(desired.IsEnabled))
 	return diffs

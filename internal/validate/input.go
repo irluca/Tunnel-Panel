@@ -67,6 +67,31 @@ type TunnelInput struct {
 	OmniPort      *int64  `json:"omni_port,omitempty"`
 	OmniConns     *int64  `json:"omni_conns,omitempty"`
 
+	// EzTransport is the eztunnel transport of an EZTunnel tunnel: one of
+	// the fifteen transports eztunnel runs. EzKey is its tunnel key in
+	// display form (five groups of five symbols); EzPort is the data port
+	// the listening side serves on (asked from the operator, never
+	// defaulted); EzHttpPath is the HTTP path of the HTTP and WebSocket
+	// carriers; EzXhttpMode and EzXhttpHost are the XHTTP mode and host
+	// override; EzRawProfile and EzRawInterface are the outer packet
+	// profile and interface of the raw carriers; EzMirageUplink and
+	// EzMirageDownlink are Mirage's directional profiles; EzSpoofSources
+	// and EzMirageExpected are the tested spoof source pool and the
+	// receive-source allowlist, each a list of IP addresses. The key is a
+	// credential and is never returned by the API.
+	EzTransport      *string   `json:"ez_transport,omitempty"`
+	EzKey            *string   `json:"ez_key,omitempty"`
+	EzPort           *int64    `json:"ez_port,omitempty"`
+	EzHttpPath       *string   `json:"ez_http_path,omitempty"`
+	EzXhttpMode      *string   `json:"ez_xhttp_mode,omitempty"`
+	EzXhttpHost      *string   `json:"ez_xhttp_host,omitempty"`
+	EzRawProfile     *string   `json:"ez_raw_profile,omitempty"`
+	EzRawInterface   *string   `json:"ez_raw_interface,omitempty"`
+	EzMirageUplink   *string   `json:"ez_mirage_uplink,omitempty"`
+	EzMirageDownlink *string   `json:"ez_mirage_downlink,omitempty"`
+	EzSpoofSources   *[]string `json:"ez_spoof_sources,omitempty"`
+	EzMirageExpected *[]string `json:"ez_mirage_expected,omitempty"`
+
 	HasInputChecksum  bool `json:"has_input_checksum"`
 	HasOutputChecksum bool `json:"has_output_checksum"`
 	HasInputSequence  bool `json:"has_input_sequence"`

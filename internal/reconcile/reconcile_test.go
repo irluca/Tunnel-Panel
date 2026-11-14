@@ -64,7 +64,7 @@ func newHarness(t *testing.T) *harness {
 	runner := exec.NewFakeRunner()
 	repo := tunnel.NewRepo(database)
 	persistStore := persist.NewStore(systemdDir, networkdDir, "/bin/systemctl", runner)
-	renderer := persist.NewRenderer("/sbin/ip", "/sbin/modprobe", "/bin/ping")
+	renderer := persist.NewRenderer("/sbin/ip", "/sbin/modprobe", "/bin/ping").WithEzConfigDir(filepath.Join(dir, "eztunnel"))
 
 	tunnels := tunnel.New(tunnel.Deps{
 		Repo:         repo,
@@ -166,6 +166,54 @@ func (h *harness) omniTunnel(t *testing.T, name string, number int, address stri
 			{Address: address, PrefixLength: 30, Family: link.FamilyIPv4, Scope: "global"},
 		},
 	})
+}
+
+// ezTunnel adds a TUN interface the way the real kernel reports one:
+// kind "tun", which the manager reads as GRE-over-WSS. The panel-owned
+// config file is what tells adoption it is an EZTunnel tunnel. It is a
+// Mirage config, because a raw carrier names both underlay endpoints in
+// its raw block — a plain TCP server config names neither, and the
+// adoption would refuse it honestly for want of endpoints.
+func (h *harness) ezTunnel(t *testing.T, name string, number int, address string) string {
+	t.Helper()
+	h.links.AddLink(link.Link{
+		Name: name, Index: 10 + number, MTU: 1400, Kind: link.KindGREWSS,
+		OperState: "UNKNOWN", IsUp: true, IsLowerUp: true, IsRunning: true,
+		Flags: []string{"POINTOPOINT", "NOARP", "UP", "LOWER_UP"},
+		Addresses: []link.Address{
+			{Address: address, PrefixLength: 30, Family: link.FamilyIPv4, Scope: "global"},
+		},
+	})
+	key, err := link.GenerateEzKey()
+	if err != nil {
+		t.Fatalf("generating an EZTunnel key failed: %v", err)
+	}
+	sources := []string{"203.0.113.7"}
+	spec := link.TunnelSpec{
+		Name: name, Local: "203.0.113.10", Remote: "198.51.100.20",
+		EzMode: link.EzModeServer, EzTransport: "mirage",
+		EzKey: key, EzPort: 8443, Mtu: 1400,
+		EzRawProfile: "tcp", EzRawInterface: "eth0",
+		EzMirageUplink: "tcp", EzMirageDownlink: "udp",
+		EzSpoofSources: sources, EzMirageExpected: sources,
+	}
+	raw, err := link.EzConfigJSON(spec, []link.Address{{Address: address, Peer: "172.17.7.2"}})
+	if err != nil {
+		t.Fatalf("rendering the EZTunnel config failed: %v", err)
+	}
+	configDir := filepath.Join(h.dir, "eztunnel")
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		t.Fatalf("creating the EZTunnel config directory failed: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(configDir, name+".json"), raw, 0o600); err != nil {
+		t.Fatalf("writing the EZTunnel config failed: %v", err)
+	}
+	// A panel-owned unit, so the adoption persists the tunnel with systemd.
+	unit := persist.OwnershipMarker + " interface=" + name + "\n\n[Unit]\nDescription=EZTunnel mirage Tunnel " + name + " (managed by gre-panel)\n\n[Service]\nType=simple\nExecStart=/var/lib/gre-panel/bin/eztunnel --config " + filepath.Join(configDir, name+".json") + "\nRestart=always\n"
+	if err := os.WriteFile(filepath.Join(h.dir, "systemd", name+".service"), []byte(unit), 0o600); err != nil {
+		t.Fatalf("writing the unit failed: %v", err)
+	}
+	return key
 }
 
 // legacyUnit writes the unit file the old script produced, defects and all.
@@ -489,6 +537,44 @@ func TestAdoptEspRegeneratesTheKeyAndWarns(t *testing.T) {
 
 // An OmniTunnel tunnel's key is not readable from the kernel, so adopting
 // one generates a fresh key and warns that the far end must be re-paired.
+func TestAdoptEzTunnelRecoversItsSettingsFromThePanelConfig(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+
+	key := h.ezTunnel(t, "eztunnel-a-7", 7, "172.17.7.1")
+	h.links.Reset()
+
+	result, err := h.service.Adopt(ctx, AdoptRequest{InterfaceName: "eztunnel-a-7"})
+	if err != nil {
+		t.Fatalf("adoption failed: %v", err)
+	}
+
+	rec := result.Tunnel
+	if rec.TunnelTypeID != model.TunnelTypeEZTunnel {
+		t.Fatalf("the adopted tunnel is type %d, want EZTunnel", rec.TunnelTypeID)
+	}
+	// The key is read back from the panel's own config, not regenerated:
+	// the tunnel keeps working with the key the far end already holds.
+	if rec.EzKey == nil || *rec.EzKey != key {
+		t.Fatalf("the adopted key is %v, want the config's key", rec.EzKey)
+	}
+	if rec.EzTransport == nil || *rec.EzTransport != "mirage" {
+		t.Fatalf("the transport was not recovered from the config: %v", rec.EzTransport)
+	}
+	if rec.EzPort == nil || *rec.EzPort != 8443 {
+		t.Fatalf("the port was not recovered from the config: %v", rec.EzPort)
+	}
+	if rec.LocalEndpoint != "203.0.113.10" || rec.RemoteEndpoint != "198.51.100.20" {
+		t.Fatalf("the endpoints were not recovered from the config: %s, %s", rec.LocalEndpoint, rec.RemoteEndpoint)
+	}
+	if rec.EzSpoofSources == nil || *rec.EzSpoofSources != `["203.0.113.7"]` {
+		t.Fatalf("the spoof sources were not recovered from the config: %v", rec.EzSpoofSources)
+	}
+	if rec.TunnelSideID != model.TunnelSideA {
+		t.Fatalf("side = %d, want A: the config says this end serves", rec.TunnelSideID)
+	}
+}
+
 func TestAdoptOmniRegeneratesTheKeyAndWarns(t *testing.T) {
 	h := newHarness(t)
 	ctx := context.Background()

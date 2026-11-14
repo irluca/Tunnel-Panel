@@ -2,9 +2,11 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/netip"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -506,6 +508,18 @@ func (s *Server) pairingPayloadFor(ctx context.Context, rec tunnel.Record) (pair
 		OmniKey:         rec.OmniKey,
 		OmniPort:        rec.OmniPort,
 		OmniConns:       rec.OmniConns,
+		EzTransport:     rec.EzTransport,
+		EzKey:           rec.EzKey,
+		EzPort:          rec.EzPort,
+		EzHttpPath:      rec.EzHttpPath,
+		EzXhttpMode:     rec.EzXhttpMode,
+		EzXhttpHost:     rec.EzXhttpHost,
+		EzRawProfile:    rec.EzRawProfile,
+		EzRawInterface:  rec.EzRawInterface,
+		EzMirageUplink:  rec.EzMirageUplink,
+		EzMirageDownlink: rec.EzMirageDownlink,
+		EzSpoofSources:   jsonStringList(rec.EzSpoofSources),
+		EzMirageExpected: jsonStringList(rec.EzMirageExpected),
 
 		HasInputChecksum:  rec.HasInputChecksum,
 		HasOutputChecksum: rec.HasOutputChecksum,
@@ -845,4 +859,17 @@ func (s *Server) auditTunnel(r *http.Request, actionID int64, target string, req
 		entry.ErrorMessage = i18n.Tr(r.Context(), err.Error())
 	}
 	s.audit.Write(r.Context(), entry)
+}
+
+// jsonStringList parses a stored JSON array of strings back into a list.
+// A NULL or empty column, or text that is not a JSON array, parses to nil.
+func jsonStringList(s *string) *[]string {
+	if s == nil || strings.TrimSpace(*s) == "" {
+		return nil
+	}
+	var list []string
+	if err := json.Unmarshal([]byte(*s), &list); err != nil {
+		return nil
+	}
+	return &list
 }

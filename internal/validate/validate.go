@@ -92,6 +92,7 @@ func validateStatic(ctx context.Context, in TunnelInput, partial bool) *Errors {
 	validateEsp(ctx, in, errs, partial)
 	validateGreWss(ctx, in, errs, partial)
 	validateOmniTunnel(ctx, in, errs, partial)
+	validateEZTunnel(ctx, in, errs, partial)
 	validateAddressSyntax(ctx, in, errs)
 
 	return errs
@@ -322,6 +323,246 @@ func validateOmniTunnel(ctx context.Context, in TunnelInput, errs *Errors, parti
 				i18n.T(ctx, "An OmniTunnel tunnel needs systemd persistence: only the systemd unit runs the binary that carries it, and restarts it after a reboot."), nil)
 		}
 	}
+}
+
+// validateEZTunnel applies the rules only an EZTunnel tunnel has. The
+// transport is one of the fifteen eztunnel runs; the key is the tunnel key
+// in display form (five groups of five symbols, generated on creation when
+// the operator does not give one); the port is asked from the operator and
+// has no default; the HTTP path belongs to the HTTP and WebSocket
+// carriers; the XHTTP mode and host belong to XHTTP and XHTTPS; the raw
+// profile and interface belong to the raw carriers; the Mirage profiles
+// and spoof sources belong to Mirage, and the spoof sources must be
+// addresses the operator tested first, never invented. Like GRE-over-WSS
+// and OmniTunnel, an EZTunnel tunnel needs systemd persistence: only the
+// unit runs the binary that carries it.
+func validateEZTunnel(ctx context.Context, in TunnelInput, errs *Errors, partial bool) {
+	if in.TunnelTypeID != model.TunnelTypeEZTunnel {
+		return
+	}
+	if !partial && (in.EzTransport == nil || strings.TrimSpace(*in.EzTransport) == "") {
+		errs.Add("ez_transport", CodeInvalidEzTransport,
+			i18n.T(ctx, "An EZTunnel tunnel needs a transport: tcp, tcp6, ws, wss, http, https, xhttp, xhttps, kcp, fec-udp, fec-raw, fec-raw-gaming, tun, parallax or mirage."), nil)
+		return
+	}
+	transport := ""
+	if in.EzTransport != nil {
+		transport = strings.TrimSpace(*in.EzTransport)
+	}
+	if transport != "" && !link.EzTransportValid(transport) {
+		errs.Add("ez_transport", CodeInvalidEzTransport,
+			i18n.T(ctx, "An EZTunnel transport is one of tcp, tcp6, ws, wss, http, https, xhttp, xhttps, kcp, fec-udp, fec-raw, fec-raw-gaming, tun, parallax or mirage."), nil)
+		return
+	}
+	if transport == "" {
+		return
+	}
+	if in.EzKey != nil && strings.TrimSpace(*in.EzKey) != "" {
+		if _, err := link.ParseEzKey(*in.EzKey); err != nil {
+			errs.Add("ez_key", CodeInvalidEzKey,
+				i18n.T(ctx, "An EZTunnel key is 25 letters and digits in five groups of five; copy it again from the other server."), nil)
+		}
+	}
+	if !partial && in.EzPort == nil {
+		errs.Add("ez_port", CodeInvalidEzPort,
+			i18n.T(ctx, "An EZTunnel tunnel needs a port. Enter one."), nil)
+	}
+	if in.EzPort != nil && (*in.EzPort < 1 || *in.EzPort > 65535) {
+		errs.Add("ez_port", CodeInvalidEzPort,
+			i18n.T(ctx, "An EZTunnel port is between 1 and 65535."), nil)
+	}
+	if link.EzTransportNeedsHTTPPath(transport) {
+		if in.EzHttpPath != nil && !validEzHTTPPath(*in.EzHttpPath) {
+			errs.Add("ez_http_path", CodeInvalidEzHttpPath,
+				i18n.T(ctx, "An HTTP path starts with / and has no spaces, query or fragment."), nil)
+		}
+	} else if in.EzHttpPath != nil && strings.TrimSpace(*in.EzHttpPath) != "" {
+		errs.Add("ez_http_path", CodeInvalidEzHttpPath,
+			i18n.T(ctx, "Only the HTTP and WebSocket carriers take an HTTP path."), nil)
+	}
+	if link.EzTransportIsXHTTP(transport) {
+		if in.EzXhttpMode != nil && !link.EzXHTTPModeValid(strings.TrimSpace(*in.EzXhttpMode)) {
+			errs.Add("ez_xhttp_mode", CodeInvalidEzXhttpMode,
+				i18n.T(ctx, "An XHTTP mode is auto, stream-up or packet-up."), nil)
+		}
+		if in.EzXhttpHost != nil && !validEzHost(strings.TrimSpace(*in.EzXhttpHost)) {
+			errs.Add("ez_xhttp_host", CodeInvalidEzXhttpHost,
+				i18n.T(ctx, "An XHTTP host is a hostname or an IP address, without a scheme or a path."), nil)
+		}
+	} else {
+		if in.EzXhttpMode != nil && strings.TrimSpace(*in.EzXhttpMode) != "" {
+			errs.Add("ez_xhttp_mode", CodeInvalidEzXhttpMode,
+				i18n.T(ctx, "Only XHTTP and XHTTPS take an XHTTP mode."), nil)
+		}
+		if in.EzXhttpHost != nil && strings.TrimSpace(*in.EzXhttpHost) != "" {
+			errs.Add("ez_xhttp_host", CodeInvalidEzXhttpHost,
+				i18n.T(ctx, "Only XHTTP and XHTTPS take an XHTTP host."), nil)
+		}
+	}
+	if link.EzTransportNeedsRaw(transport) {
+		if !partial && (in.EzRawProfile == nil || strings.TrimSpace(*in.EzRawProfile) == "") {
+			errs.Add("ez_raw_profile", CodeInvalidEzRawProfile,
+				i18n.T(ctx, "A raw carrier needs an outer packet profile: tcp, udp, icmp, gre, ipip, raw or dns."), nil)
+		}
+		if in.EzRawProfile != nil && strings.TrimSpace(*in.EzRawProfile) != "" && !link.EzRawProfileValid(strings.TrimSpace(*in.EzRawProfile)) {
+			errs.Add("ez_raw_profile", CodeInvalidEzRawProfile,
+				i18n.T(ctx, "A raw packet profile is one of tcp, udp, icmp, gre, ipip, raw or dns."), nil)
+		}
+		if in.EzRawInterface != nil && !validEzInterface(strings.TrimSpace(*in.EzRawInterface)) {
+			errs.Add("ez_raw_interface", CodeInvalidEzRawInterface,
+				i18n.T(ctx, "An interface name is 1 to 15 letters, digits, underscores or hyphens."), nil)
+		}
+	} else {
+		if in.EzRawProfile != nil && strings.TrimSpace(*in.EzRawProfile) != "" {
+			errs.Add("ez_raw_profile", CodeInvalidEzRawProfile,
+				i18n.T(ctx, "Only the raw carriers take an outer packet profile."), nil)
+		}
+		if in.EzRawInterface != nil && strings.TrimSpace(*in.EzRawInterface) != "" {
+			errs.Add("ez_raw_interface", CodeInvalidEzRawInterface,
+				i18n.T(ctx, "Only the raw carriers take an interface."), nil)
+		}
+	}
+	if link.EzTransportIsMirage(transport) {
+		if !partial && (in.EzMirageUplink == nil || strings.TrimSpace(*in.EzMirageUplink) == "") {
+			errs.Add("ez_mirage_uplink", CodeInvalidEzMirageProfile,
+				i18n.T(ctx, "Mirage needs an uplink profile: tcp, udp, icmp, icmpv6, gre, ipip or bip."), nil)
+		}
+		if !partial && (in.EzMirageDownlink == nil || strings.TrimSpace(*in.EzMirageDownlink) == "") {
+			errs.Add("ez_mirage_downlink", CodeInvalidEzMirageProfile,
+				i18n.T(ctx, "Mirage needs a downlink profile: tcp, udp, icmp, icmpv6, gre, ipip or bip."), nil)
+		}
+		if in.EzMirageUplink != nil && strings.TrimSpace(*in.EzMirageUplink) != "" && !link.EzMirageProfileValid(strings.TrimSpace(*in.EzMirageUplink)) {
+			errs.Add("ez_mirage_uplink", CodeInvalidEzMirageProfile,
+				i18n.T(ctx, "A Mirage profile is one of tcp, udp, icmp, icmpv6, gre, ipip or bip."), nil)
+		}
+		if in.EzMirageDownlink != nil && strings.TrimSpace(*in.EzMirageDownlink) != "" && !link.EzMirageProfileValid(strings.TrimSpace(*in.EzMirageDownlink)) {
+			errs.Add("ez_mirage_downlink", CodeInvalidEzMirageProfile,
+				i18n.T(ctx, "A Mirage profile is one of tcp, udp, icmp, icmpv6, gre, ipip or bip."), nil)
+		}
+		if !partial && (in.EzSpoofSources == nil || len(*in.EzSpoofSources) == 0) {
+			errs.Add("ez_spoof_sources", CodeInvalidEzSpoofSources,
+				i18n.T(ctx, "Mirage needs at least one tested spoof source address. Test them with the spoof test first; never invent them."), nil)
+		}
+		validateEzIPList(ctx, errs, "ez_spoof_sources", CodeInvalidEzSpoofSources,
+			i18n.T(ctx, "A spoof source is an IPv4 address."), in.EzSpoofSources)
+		validateEzIPList(ctx, errs, "ez_mirage_expected", CodeInvalidEzMirageExpected,
+			i18n.T(ctx, "An expected source is an IPv4 address."), in.EzMirageExpected)
+	} else {
+		if in.EzMirageUplink != nil && strings.TrimSpace(*in.EzMirageUplink) != "" {
+			errs.Add("ez_mirage_uplink", CodeInvalidEzMirageProfile,
+				i18n.T(ctx, "Only Mirage takes an uplink profile."), nil)
+		}
+		if in.EzMirageDownlink != nil && strings.TrimSpace(*in.EzMirageDownlink) != "" {
+			errs.Add("ez_mirage_downlink", CodeInvalidEzMirageProfile,
+				i18n.T(ctx, "Only Mirage takes a downlink profile."), nil)
+		}
+		if in.EzSpoofSources != nil && len(*in.EzSpoofSources) != 0 {
+			errs.Add("ez_spoof_sources", CodeInvalidEzSpoofSources,
+				i18n.T(ctx, "Only Mirage takes spoof sources."), nil)
+		}
+		if in.EzMirageExpected != nil && len(*in.EzMirageExpected) != 0 {
+			errs.Add("ez_mirage_expected", CodeInvalidEzMirageExpected,
+				i18n.T(ctx, "Only Mirage takes expected sources."), nil)
+		}
+	}
+	if link.EzTransportIsIPv6(transport) {
+		for _, endpoint := range []string{in.LocalEndpoint, in.RemoteEndpoint} {
+			addr, err := netip.ParseAddr(endpoint)
+			if err == nil && !addr.Is6() {
+				errs.Add("local_endpoint", CodeEndpointFamily,
+					i18n.T(ctx, "tcp6 needs IPv6 endpoints at both ends."), nil)
+				break
+			}
+		}
+	}
+	if in.IKey != nil || in.OKey != nil {
+		errs.Add("ikey", CodeInvalidEspField,
+			i18n.T(ctx, "An EZTunnel tunnel has no GRE key; its shared secret is the tunnel key."), nil)
+	}
+	if in.HasInputChecksum || in.HasOutputChecksum || in.HasInputSequence || in.HasOutputSequence {
+		errs.Add("has_input_checksum", CodeInvalidEspField,
+			i18n.T(ctx, "Checksum and sequence options belong to GRE and have no meaning on an EZTunnel tunnel."), nil)
+	}
+	if in.HopLimit != nil || in.EncapLimit != nil || in.TrafficClass != "" || in.FlowLabel != "" {
+		errs.Add("hop_limit", CodeInvalidEspField,
+			i18n.T(ctx, "Hop limit, encapsulation limit, traffic class and flow label belong to the IPv6 GRE types."), nil)
+	}
+	if in.IsPathMtuDiscovery {
+		errs.Add("is_path_mtu_discovery", CodeInvalidEspField,
+			i18n.T(ctx, "Path-MTU discovery belongs to GRE and has no meaning on an EZTunnel tunnel."), nil)
+	}
+	if in.IsIgnoreDf {
+		errs.Add("is_ignore_df", CodeInvalidEspField,
+			i18n.T(ctx, "Ignore-df belongs to GRE and has no meaning on an EZTunnel tunnel."), nil)
+	}
+	if in.FwMark != nil {
+		errs.Add("fwmark", CodeInvalidEspField,
+			i18n.T(ctx, "An EZTunnel tunnel does not carry a firewall mark."), nil)
+	}
+	if !partial || in.PersistenceTypeID != 0 {
+		if in.PersistenceTypeID != model.PersistenceTypeSystemd {
+			errs.Add("persistence_type_id", CodeInvalidPersistence,
+				i18n.T(ctx, "An EZTunnel tunnel needs systemd persistence: only the systemd unit runs the binary that carries it, and restarts it after a reboot."), nil)
+		}
+	}
+}
+
+// validateEzIPList checks that every entry of an optional IP list parses as
+// an IPv4 address. An empty list is fine here; the caller decides whether
+// the list is required.
+func validateEzIPList(ctx context.Context, errs *Errors, field, code, message string, list *[]string) {
+	if list == nil {
+		return
+	}
+	for _, ip := range *list {
+		addr, err := netip.ParseAddr(strings.TrimSpace(ip))
+		if err != nil || !addr.Is4() {
+			errs.Add(field, code, message, nil)
+			return
+		}
+	}
+}
+
+// validEzHTTPPath reports whether a path is an absolute ASCII HTTP path
+// without whitespace, control characters, query or fragment.
+func validEzHTTPPath(path string) bool {
+	if len(path) == 0 || len(path) > 512 || path[0] != '/' {
+		return false
+	}
+	for _, c := range path {
+		if c > 127 || c <= ' ' || c == '?' || c == '#' {
+			return false
+		}
+	}
+	return true
+}
+
+// validEzHost reports whether a value is a plain hostname or IP address,
+// without a scheme, a path, or whitespace.
+func validEzHost(host string) bool {
+	if host == "" || strings.ContainsAny(host, " /?:#") {
+		return false
+	}
+	for _, c := range host {
+		if c <= ' ' || c > 127 {
+			return false
+		}
+	}
+	return true
+}
+
+// validEzInterface reports whether a name fits a network interface: 1 to 15
+// ASCII letters, digits, underscores or hyphens.
+func validEzInterface(name string) bool {
+	if len(name) == 0 || len(name) > 15 {
+		return false
+	}
+	for _, c := range name {
+		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '_' || c == '-') {
+			return false
+		}
+	}
+	return true
 }
 
 func validateName(ctx context.Context, in TunnelInput, errs *Errors) {

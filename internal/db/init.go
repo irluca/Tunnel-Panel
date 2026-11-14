@@ -221,6 +221,22 @@ var columnAdditions = []columnAddition{
 	{"Tunnel", "OmniPort", "INTEGER"},
 	{"Tunnel", "OmniConns", "INTEGER"},
 
+	// The EZTunnel fields. NULL on every tunnel that predates them and on
+	// every tunnel that is not EZTunnel. EzSpoofSources and
+	// EzMirageExpected hold JSON arrays of IP addresses.
+	{"Tunnel", "EzTransport", "TEXT"},
+	{"Tunnel", "EzKey", "TEXT"},
+	{"Tunnel", "EzPort", "INTEGER"},
+	{"Tunnel", "EzHttpPath", "TEXT"},
+	{"Tunnel", "EzXhttpMode", "TEXT"},
+	{"Tunnel", "EzXhttpHost", "TEXT"},
+	{"Tunnel", "EzRawProfile", "TEXT"},
+	{"Tunnel", "EzRawInterface", "TEXT"},
+	{"Tunnel", "EzMirageUplink", "TEXT"},
+	{"Tunnel", "EzMirageDownlink", "TEXT"},
+	{"Tunnel", "EzSpoofSources", "TEXT"},
+	{"Tunnel", "EzMirageExpected", "TEXT"},
+
 	// The GRE-over-WSS port. NULL means the default, 443.
 	{"Tunnel", "WssPort", "INTEGER"},
 

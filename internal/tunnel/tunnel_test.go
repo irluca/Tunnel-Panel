@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"path/filepath"
 	"runtime"
 	"slices"
 	"strings"
@@ -1546,5 +1547,265 @@ func TestCreateGreWssWithoutAPortIsRefused(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "needs a port") {
 		t.Fatalf("the refusal does not say why: %v", err)
+	}
+}
+
+func ezRequest(transport string) Request {
+	req := request()
+	req.TunnelTypeID = model.TunnelTypeEZTunnel
+	req.EzTransport = &transport
+	// The port is entered by the operator, like a port-forwarding rule's
+	// bind port: there is no default.
+	port := int64(8443)
+	req.EzPort = &port
+	return req
+}
+
+// An EZTunnel tunnel is created the same way as an OmniTunnel one, but its
+// unit runs the eztunnel binary with a JSON config: it is Type=simple with
+// Restart=always, the config is written 0600 because it carries the tunnel
+// key, and verification must confirm the TUN the binary owns is up with
+// the right MTU and addresses — while confirming it reports no tunnel
+// attributes, because the endpoints and key live in the binary, not the
+// kernel.
+func TestCreateEzTunnelAppliesVerifiesAndPersists(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+
+	result := h.mustCreate(t, ezRequest("tcp"))
+
+	rec := result.Tunnel
+	if rec.InterfaceName != "eztunnel-a-1" {
+		t.Fatalf("the EZTunnel tunnel is named %q", rec.InterfaceName)
+	}
+	if rec.EzTransport == nil || *rec.EzTransport != "tcp" {
+		t.Fatalf("the EZTunnel transport is %v, want tcp", rec.EzTransport)
+	}
+	if rec.EzKey == nil || *rec.EzKey == "" {
+		t.Fatal("no EZTunnel key was generated for the tunnel")
+	}
+	if _, err := link.ParseEzKey(*rec.EzKey); err != nil {
+		t.Fatalf("the generated EZTunnel key does not parse: %v", err)
+	}
+	if rec.EzPort == nil || *rec.EzPort != 8443 {
+		t.Fatalf("the EZTunnel port is %v, want the entered 8443", rec.EzPort)
+	}
+
+	unit := persist.UnitName("eztunnel-a-1")
+	if !persist.Exists(h.unitPath("eztunnel-a-1")) {
+		t.Fatal("the unit file was not written")
+	}
+	if !h.systemd.IsEnabled(unit) || !h.systemd.IsActive(unit) {
+		t.Fatal("the unit was not enabled and started")
+	}
+
+	// The unit is a long-running binary, not a one-shot ip command.
+	unitText, err := os.ReadFile(h.unitPath("eztunnel-a-1"))
+	if err != nil {
+		t.Fatalf("reading the unit failed: %v", err)
+	}
+	if !strings.Contains(string(unitText), "Type=simple") {
+		t.Fatal("the unit is not Type=simple")
+	}
+	if !strings.Contains(string(unitText), "Restart=always") {
+		t.Fatal("the unit does not restart the binary")
+	}
+	if !strings.Contains(string(unitText), "eztunnel --config") {
+		t.Fatalf("the unit does not run eztunnel with a config: %s", unitText)
+	}
+
+	// The config is written 0600 because it carries the tunnel key, and
+	// it is exactly what the binary runs: the same config passes the
+	// real binary's --check in the link tests.
+	configPath := filepath.Join(h.dir, "eztunnel", "eztunnel-a-1.json")
+	raw, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("reading the EZTunnel config failed: %v", err)
+	}
+	if runtime.GOOS != "windows" {
+		info, err := os.Stat(configPath)
+		if err != nil {
+			t.Fatalf("the config could not be stat'd: %v", err)
+		}
+		if info.Mode().Perm() != persist.SecretFileMode {
+			t.Fatalf("config permissions = %v, want %v", info.Mode().Perm(), persist.SecretFileMode)
+		}
+	}
+	cfg, err := link.ParseEzConfig(raw)
+	if err != nil {
+		t.Fatalf("the written config does not parse: %v", err)
+	}
+	if cfg.Mode != link.EzModeServer || cfg.Transport != "tcp" || cfg.Port != 8443 {
+		t.Fatalf("the written config is not the server tcp tunnel on 8443: %+v", cfg)
+	}
+	if cfg.Key != *rec.EzKey {
+		t.Fatal("the written config carries a different key from the record")
+	}
+
+	// The plan's config step carries the secret mode, so a preview shows
+	// the operator what will be written.
+	for _, step := range result.Plan.Steps {
+		if step.Kind == StepFileWrite && step.FileKind == FileEzConfig {
+			if step.Mode != persist.SecretFileMode {
+				t.Fatalf("the config file step has mode %v, want %v", step.Mode, persist.SecretFileMode)
+			}
+		}
+	}
+
+	if !result.Verify.Ok {
+		t.Fatalf("verification failed: %+v", result.Verify.Failures)
+	}
+
+	observed, err := h.links.Get(ctx, "eztunnel-a-1")
+	if err != nil {
+		t.Fatalf("reading the interface failed: %v", err)
+	}
+	if observed.Kind != link.KindEZTunnel {
+		t.Fatalf("the interface kind is %q, want %q", observed.Kind, link.KindEZTunnel)
+	}
+	if observed.Tunnel != nil {
+		t.Fatal("the TUN reports tunnel attributes, which it should not have")
+	}
+	if observed.MTU != 1400 {
+		t.Fatalf("the TUN MTU is %d, want 1400", observed.MTU)
+	}
+	if !slices.Contains(observed.Flags, "UP") {
+		t.Fatalf("the TUN is not up: %v", observed.Flags)
+	}
+}
+
+// An EZTunnel tunnel without a port is refused: the port is asked from the
+// operator, never defaulted, and the binary cannot listen on a port nobody
+// chose.
+func TestCreateEzTunnelWithoutAPortIsRefused(t *testing.T) {
+	h := newHarness(t)
+
+	req := ezRequest("tcp")
+	req.EzPort = nil
+	_, err := h.service.Create(context.Background(), req)
+	if err == nil {
+		t.Fatal("creating an EZTunnel tunnel without a port succeeded")
+	}
+	if !strings.Contains(err.Error(), "needs a port") {
+		t.Fatalf("the refusal does not say why: %v", err)
+	}
+}
+
+// A Mirage tunnel without tested spoof sources is refused: the sources must
+// come from a spoof test the operator ran first, never invented, and the
+// panel has no test result to build from.
+func TestCreateEzMirageTunnelWithoutSpoofSourcesIsRefused(t *testing.T) {
+	h := newHarness(t)
+
+	req := ezRequest("mirage")
+	uplink := "tcp"
+	downlink := "udp"
+	req.EzMirageUplink = &uplink
+	req.EzMirageDownlink = &downlink
+	_, err := h.service.Create(context.Background(), req)
+	if err == nil {
+		t.Fatal("creating a Mirage tunnel without spoof sources succeeded")
+	}
+	if !strings.Contains(err.Error(), "spoof") {
+		t.Fatalf("the refusal does not say why: %v", err)
+	}
+}
+
+// A Mirage tunnel with tested spoof sources is created, and the sources
+// survive in the record and in the config the binary runs.
+func TestCreateEzMirageTunnelAppliesVerifiesAndPersists(t *testing.T) {
+	h := newHarness(t)
+
+	req := ezRequest("mirage")
+	uplink := "tcp"
+	downlink := "udp"
+	rawProfile := "tcp"
+	rawInterface := "eth0"
+	sources := []string{"203.0.113.7", "198.51.100.23"}
+	expected := []string{"203.0.113.7"}
+	req.EzMirageUplink = &uplink
+	req.EzMirageDownlink = &downlink
+	req.EzRawProfile = &rawProfile
+	req.EzRawInterface = &rawInterface
+	req.EzSpoofSources = &sources
+	req.EzMirageExpected = &expected
+
+	result := h.mustCreate(t, req)
+	rec := result.Tunnel
+	if rec.EzSpoofSources == nil || *rec.EzSpoofSources != `["203.0.113.7","198.51.100.23"]` {
+		t.Fatalf("the spoof sources are %v, want the entered two", rec.EzSpoofSources)
+	}
+	if rec.EzMirageExpected == nil || *rec.EzMirageExpected != `["203.0.113.7"]` {
+		t.Fatalf("the expected sources are %v, want the entered one", rec.EzMirageExpected)
+	}
+
+	raw, err := os.ReadFile(filepath.Join(h.dir, "eztunnel", "eztunnel-a-1.json"))
+	if err != nil {
+		t.Fatalf("reading the EZTunnel config failed: %v", err)
+	}
+	cfg, err := link.ParseEzConfig(raw)
+	if err != nil {
+		t.Fatalf("the written config does not parse: %v", err)
+	}
+	if cfg.MirageUplink != "tcp" || cfg.MirageDownlink != "udp" {
+		t.Fatalf("the written config carries the wrong Mirage profiles: %+v", cfg)
+	}
+	if len(cfg.SpoofSources) != 2 || cfg.SpoofSources[0] != "203.0.113.7" {
+		t.Fatalf("the written config carries the wrong spoof sources: %v", cfg.SpoofSources)
+	}
+	if len(cfg.MirageExpected) != 1 || cfg.MirageExpected[0] != "203.0.113.7" {
+		t.Fatalf("the written config carries the wrong expected sources: %v", cfg.MirageExpected)
+	}
+	if !result.Verify.Ok {
+		t.Fatalf("verification failed: %+v", result.Verify.Failures)
+	}
+}
+
+// An unrelated edit to an EZTunnel tunnel must not lose its key, its port,
+// its transport or its spoof lists: the record carries the secret the peer
+// still holds, and rewriting it to NULL would leave the tunnel unable to
+// authenticate.
+func TestUpdateOfAnEzTunnelKeepsItsKeyPortAndLists(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+
+	req := ezRequest("mirage")
+	uplink := "tcp"
+	downlink := "udp"
+	rawProfile := "tcp"
+	sources := []string{"203.0.113.7"}
+	req.EzMirageUplink = &uplink
+	req.EzMirageDownlink = &downlink
+	req.EzRawProfile = &rawProfile
+	req.EzSpoofSources = &sources
+	created := h.mustCreate(t, req)
+	key := created.Tunnel.EzKey
+	port := created.Tunnel.EzPort
+	transport := created.Tunnel.EzTransport
+	spoof := created.Tunnel.EzSpoofSources
+
+	// An unrelated edit: the merged input carries everything the record
+	// holds, so only the display name changes.
+	update := mergedInput(created.Tunnel)
+	update.DisplayName = "renamed"
+	if _, err := h.service.Update(ctx, created.Tunnel.TunnelID, Request{TunnelInput: update}); err != nil {
+		t.Fatalf("updating the tunnel failed: %v", err)
+	}
+
+	rec, err := h.repo.ByID(ctx, created.Tunnel.TunnelID)
+	if err != nil {
+		t.Fatalf("reading the tunnel failed: %v", err)
+	}
+	if rec.EzKey == nil || *rec.EzKey != *key {
+		t.Fatalf("the key changed on an unrelated edit: %v", rec.EzKey)
+	}
+	if rec.EzPort == nil || *rec.EzPort != *port {
+		t.Fatalf("the port changed on an unrelated edit: %v", rec.EzPort)
+	}
+	if rec.EzTransport == nil || *rec.EzTransport != *transport {
+		t.Fatalf("the transport changed on an unrelated edit: %v", rec.EzTransport)
+	}
+	if rec.EzSpoofSources == nil || *rec.EzSpoofSources != *spoof {
+		t.Fatalf("the spoof sources changed on an unrelated edit: %v", rec.EzSpoofSources)
 	}
 }

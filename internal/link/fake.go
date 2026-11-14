@@ -275,7 +275,7 @@ func (f *Fake) Create(ctx context.Context, spec TunnelSpec) error {
 		esp.PoliciesPresent = len(esp.SPIs) == 2
 		l.Tunnel.Esp = esp
 	}
-	if spec.Kind == KindGREWSS || spec.Kind == KindOmniTunnel {
+	if spec.Kind == KindGREWSS || spec.Kind == KindOmniTunnel || spec.Kind == KindEZTunnel {
 		// A TUN interface reports no tunnel attributes in the kernel: the
 		// endpoints, keys and token live in the relay. The fake models that
 		// by leaving the tunnel attributes unset, so a verify that reads

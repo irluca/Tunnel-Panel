@@ -33,6 +33,7 @@ import (
 	"github.com/drs/gre-panel/internal/diag"
 	"github.com/drs/gre-panel/internal/dns"
 	"github.com/drs/gre-panel/internal/exec"
+	"github.com/drs/gre-panel/internal/eztunnel"
 	"github.com/drs/gre-panel/internal/i18n"
 	"github.com/drs/gre-panel/internal/link"
 	"github.com/drs/gre-panel/internal/lock"
@@ -232,7 +233,7 @@ func run() error {
 	runner := exec.NewRunner()
 	links := link.Select(link.Options{IPBin: cfg.IPBin, Runner: runner, DevMode: cfg.DevMode})
 	renderer := persist.NewRenderer(cfg.IPBin, lookupBinary("modprobe", persist.DefaultModprobeBin),
-		lookupBinary("ping", persist.DefaultPingBin)).WithPanelBin(selfBinary()).WithOmniBin(omnitunnel.BinaryPath(cfg.DataDir))
+		lookupBinary("ping", persist.DefaultPingBin)).WithPanelBin(selfBinary()).WithOmniBin(omnitunnel.BinaryPath(cfg.DataDir)).WithEzBin(eztunnel.BinaryPath(cfg.DataDir)).WithEzConfigDir(filepath.Join(cfg.DataDir, "eztunnel"))
 	persistStore := persist.NewStore(cfg.SystemdDir, cfg.NetworkdDir, cfg.SystemctlBin, runner)
 
 	// The netfilter backend for the port forwarding subsystem, chosen once at
@@ -278,10 +279,11 @@ func run() error {
 		Store:         persistStore,
 		Alloc:         allocator,
 		Validator:     validate.New(links, repo.ForValidation(), store, cfg.APIBasePath()+"/reconcile/adopt"),
-		Guard:         safety.New(links, cfg.SystemdDir, cfg.NetworkdDir),
+		Guard:         safety.New(links, cfg.SystemdDir, cfg.NetworkdDir).WithEzConfigDir(filepath.Join(cfg.DataDir, "eztunnel")),
 		Settings:      store,
 		Log:           log,
 		BinaryEnsurer: omnitunnel.New(cfg.DataDir, log),
+		EzBinaryEnsurer: eztunnel.New(cfg.DataDir, log),
 		IPBin:         cfg.IPBin,
 		SystemctlBin:  cfg.SystemctlBin,
 		NetworkctlBin: lookupBinary("networkctl", ""),
