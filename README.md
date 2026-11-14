@@ -4,16 +4,18 @@
 
 **GRE tunnels and port forwarding on a Linux server — from a web panel that shows its work.**
 
+> **This fork** (`esp-carrier` branch, [irluca/Tunnel-Panel](https://github.com/irluca/Tunnel-Panel)) keeps the panel above and adds encrypted and hard-path carriers: ESP (IPsec), GRE-over-WSS, OmniTunnel transports and the whole EZTunnel engine (Noise). See [What this fork adds](#what-this-fork-adds). Upstream is [DrSaeedHub/Tunnel-Panel](https://github.com/DrSaeedHub/Tunnel-Panel); this fork stays AGPL-3.0.
+
 One static binary. No interpreter, no virtualenv, no package manager.
 Every change is previewed before it runs and verified against the kernel after it does.
 
-[![release](https://img.shields.io/github/v/release/DrSaeedHub/Tunnel-Panel?style=flat-square&color=6366f1&label=release)](https://github.com/DrSaeedHub/Tunnel-Panel/releases)
-[![downloads](https://img.shields.io/github/downloads/DrSaeedHub/Tunnel-Panel/total?style=flat-square&color=22c55e&label=downloads)](https://github.com/DrSaeedHub/Tunnel-Panel/releases)
+[![release](https://img.shields.io/github/v/release/irluca/Tunnel-Panel?style=flat-square&color=6366f1&label=release)](https://github.com/irluca/Tunnel-Panel/releases)
+[![downloads](https://img.shields.io/github/downloads/irluca/Tunnel-Panel/total?style=flat-square&color=22c55e&label=downloads)](https://github.com/irluca/Tunnel-Panel/releases)
 ![platform](https://img.shields.io/badge/platform-linux%20%C2%B7%20amd64%20%C2%B7%20arm64-334155?style=flat-square)
 ![go](https://img.shields.io/badge/go-1.23-00ADD8?style=flat-square)
 ![runtime dependencies](https://img.shields.io/badge/runtime%20dependencies-none-334155?style=flat-square)
 
-[Install](#install) · [The tour](#the-tour) · [Feature reference](#feature-reference) · [Offline install](#offline-installation) · [Configuration](#configuration) · [Build from source](#building-from-source)
+[Install](#install) · [What this fork adds](#what-this-fork-adds) · [The tour](#the-tour) · [Feature reference](#feature-reference) · [Offline install](#offline-installation) · [Configuration](#configuration) · [Build from source](#building-from-source)
 
 </div>
 
@@ -24,7 +26,7 @@ Every change is previewed before it runs and verified against the kernel after i
 ## Install
 
 ```bash
-bash <(curl -Ls https://raw.githubusercontent.com/DrSaeedHub/Tunnel-Panel/main/scripts/install.sh)
+bash <(curl -Ls https://raw.githubusercontent.com/irluca/Tunnel-Panel/esp-carrier/scripts/install.sh)
 ```
 
 It asks for an admin username, a password, a port and a web path — proposing a random port and
@@ -40,7 +42,7 @@ instead of installing over the top.
 <summary><strong>Unattended installation, every flag, and the exit codes</strong></summary>
 
 ```bash
-bash <(curl -Ls https://raw.githubusercontent.com/DrSaeedHub/Tunnel-Panel/main/scripts/install.sh) \
+bash <(curl -Ls https://raw.githubusercontent.com/irluca/Tunnel-Panel/esp-carrier/scripts/install.sh) \
   --non-interactive --json \
   --username admin --password '…' --port 8443 --web-path $(openssl rand -hex 12)
 ```
@@ -85,6 +87,59 @@ strength of `systemctl start` returning zero.
 
 ---
 
+## What this fork adds
+
+All six phases are built and pushed on the `esp-carrier` branch. The panel stays
+Tunnel-Panel; only the carriers and the operations around them are new.
+
+### Tunnel types
+
+| Type | ID | What it is | When to use it |
+|---|---|---|---|
+| GRE, GRETAP, IP6GRE, IP6GRETAP | 1–4 | Upstream GRE, no encryption | Clean path, fastest setup |
+| ESP | 50 | Kernel XFRM, transport mode, AES-128-GCM, manually keyed, no IKE | Clean path, encrypted, kernel speed |
+| GRE-over-WSS | 60 | Real GRE headers carried over WebSocket Secure by a userspace relay | Path filters IP protocols 47 and 50 |
+| OmniTunnel | 70 | The `omnitun` binary (v2.9.17, pinned SHA-256), transports udp, tcp, mux, ws, icmp | One binary, several transports |
+| EZTunnel | 80 | The `eztunnel` binary whole and untouched (v0.9.14, pinned SHA-256), Noise encryption (ChaCha20-Poly1305) | Hard path, 15 transports |
+
+For GRE-over-WSS, OmniTunnel and EZTunnel the port is always entered by the operator —
+there is no default port. EZTunnel's 15 transports are tcp, tcp6, ws, wss, http, https,
+xhttp, xhttps, kcp, fec-udp, fec-raw, fec-raw-gaming, tun, parallax and mirage. GRE and
+ESP are **not** inside EZTunnel: GRE appears there only as an outer packet shape in
+Mirage and FEC-RAW, and its encryption is Noise, not IPsec. Mirage spoof sources come
+only from a spoof test the operator ran (`eztunnel spooftest`); the panel never invents
+them.
+
+### Switching, watching and diagnosis
+
+- **Carrier switch (GRE ↔ ESP only)** with automatic rollback: a failed switch restores
+  the previous carrier and verifies it. A switch preview shows the new interface name
+  and the fresh ESP key before anything is applied.
+- **Watchdog (GRE/ESP only):** a tunnel continuously down for 60 seconds switches
+  carrier automatically. Circuit breaker: at most one switch per 3 minutes and 3
+  switches per 15 minutes per tunnel. A merely degraded tunnel never switches.
+- **Vote-based diagnosis:** every signal (underlay, counters, tunnel probe, firewall,
+  MTU, kernel-vs-database mismatch) votes, and the strongest cause wins — including an
+  explicit `CONFIG_MISMATCH` verdict. A path test (ping through the tunnel, MTU probe,
+  traceroute) runs in one call.
+- **Attention bar and trouble-first sorting** on the tunnels page; a per-tunnel traffic
+  ledger; Telegram alerts (bot token and chat ID entered in panel Settings, never sent
+  elsewhere) when the watchdog switches, fails, or its breaker trips — optionally sent
+  from inside a tunnel.
+- **Cluster view and Cloudflare DNS failover:** peers are polled over their public
+  health endpoint; a DNS record moves to the first healthy tunnel endpoint, and stays
+  put when nothing is healthy. Scheduled IP rotation is supported.
+- **Checksum-verified updates:** the update check fetches `SHA256SUMS` from this
+  fork's releases and marks a release verified or unverified; the installer still
+  refuses an unverified binary.
+
+> **Honest status:** the new carriers pass the full test suite and their rendered
+> configs pass the real `eztunnel --config FILE --check` for all 15 transports, but
+> live proof on a real server is still pending — this machine cannot create a TUN
+> interface. No release has been cut from `esp-carrier` yet.
+
+---
+
 # The tour
 
 ## The whole server on one screen
@@ -101,7 +156,8 @@ Each tunnel appears in the breakdown under the name you gave it, and clicking it
 ## Tunnels that are verified, not assumed
 
 Create, edit, enable, disable, restart, reapply and delete GRE, GRETAP, IP6GRE and IP6GRETAP
-tunnels. Nothing is reported working because a command exited zero: after every apply the panel
+tunnels — and in this fork also ESP, GRE-over-WSS, OmniTunnel and EZTunnel (see
+[What this fork adds](#what-this-fork-adds)). Nothing is reported working because a command exited zero: after every apply the panel
 reads the interface back out of the kernel and checks it against what was asked for.
 
 ![The tunnel list](docs/screenshots/04-tunnels.png)
@@ -268,7 +324,11 @@ most translated panels come apart. Adding a language needs no code change.
 
 | | |
 |---|---|
-| **Tunnels** | GRE, GRETAP, IP6GRE, IP6GRETAP · create, edit, enable, disable, restart, reapply, delete · systemd, networkd or runtime persistence · plan preview with rollback and post-apply verification · pairing codes with the side flipped · drift detection and adoption of tunnels the panel did not create |
+| **Tunnels** | GRE, GRETAP, IP6GRE, IP6GRETAP · ESP (kernel XFRM, AES-128-GCM, no IKE) · GRE-over-WSS (userspace relay, port entered by the operator) · OmniTunnel (udp, tcp, mux, ws, icmp; pinned binary) · EZTunnel (all 15 transports; Noise; pinned binary) · create, edit, enable, disable, restart, reapply, delete · systemd, networkd or runtime persistence (GRE-WSS, OmniTunnel and EZTunnel: systemd only) · plan preview with rollback and post-apply verification · pairing codes with the side flipped · drift detection and adoption of tunnels the panel did not create |
+| **Carrier switching** | GRE ↔ ESP with automatic rollback and switch preview · watchdog auto-switch after 60 s continuously down, with circuit breaker (1 switch / 3 min, 3 / 15 min per tunnel) |
+| **Diagnosis** | Vote-based verdict (incl. kernel-vs-database mismatch) · one-call path test: ping through the tunnel, MTU probe, traceroute |
+| **Alerts and cluster** | Telegram alerts from inside a tunnel (optional) · attention bar, trouble-first sorting, per-tunnel traffic ledger · cluster peer view · Cloudflare DNS failover and scheduled IP rotation |
+| **Updates** | Update check fetches SHA256SUMS from this fork's releases and shows verified / unverified; installer refuses an unverified binary |
 | **Addressing** | Address pools with capacity and usage · automatic per-tunnel allocation or manual addresses · several addresses per tunnel · overlap and conflict validation before anything is applied |
 | **Monitoring** | Native ICMP, one socket per tunnel, no subprocess · rolling window with late-reply revision · hysteresis on state changes · TCP knock when ICMP is filtered · per-tunnel thresholds · history for an hour, a day, a week or a month · every transition kept with its reason |
 | **Port forwarding** | TCP, UDP or both · single ports and port ranges · several destinations with round-robin, source-hash or weighted balancing · masquerade, SNAT or none · MSS clamping · per-source connection limits and connection rate limits · allowed source ranges and shared source lists · rule ordering that decides which rule wins |
@@ -302,7 +362,7 @@ the server's Ubuntu release — the installer checks and refuses a mismatch. Bot
 a local APT repository, so no installation step reaches the network; the bundle's SHA-256
 manifest is verified before anything touches the system.
 
-Download one from the [releases page](https://github.com/DrSaeedHub/Tunnel-Panel/releases),
+Download one from the [releases page](https://github.com/irluca/Tunnel-Panel/releases),
 transfer it to the server by any method you like, then:
 
 ```bash
@@ -454,6 +514,13 @@ internal/quota        traffic limits and enforcement
 internal/tuning       kernel parameters: recommendation, apply, revert
 internal/metrics      /proc and /sys sampling, traffic counters
 internal/diag         analysis, manual probe, path-MTU search, traceroute
+internal/watchdog     GRE/ESP auto-switch on sustained down, circuit breaker
+internal/notify       Telegram alerts, optionally sent from inside a tunnel
+internal/dns          Cloudflare client and DNS failover / rotation
+internal/cluster      peer health polling over the public health endpoint
+internal/grewss       GRE-over-WSS userspace relay
+internal/omnitunnel   pinned omnitun binary download and verification
+internal/eztunnel     pinned eztunnel binary download and verification
 internal/backup       backup, restore and one-time download links
 web/embed.go          embeds web/dist into the binary
 web/_app/             the React application
