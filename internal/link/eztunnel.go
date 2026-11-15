@@ -1,5 +1,5 @@
 // EZTunnel transports, driven by the eztunnel binary. The fifteen are the
-// ones eztunnel 0.9.14 runs: tcp, tcp6, ws, wss, http, https, xhttp, xhttps,
+// ones eztunnel 0.10.0 runs: tcp, tcp6, ws, wss, http, https, xhttp, xhttps,
 // kcp, fec-udp, fec-raw, fec-raw-gaming, tun, parallax and mirage. The panel
 // runs the binary whole — it renders the JSON config, writes the systemd
 // unit and manages the pairing — and never re-implements a transport, so
@@ -271,7 +271,7 @@ func ParseEzKey(key string) (string, error) {
 // downloaded from that release's tag, never from main, so a new EZTunnel
 // release cannot change what this panel installs without the panel being
 // updated to pin it.
-const EzBinaryVersion = "v0.9.14"
+const EzBinaryVersion = "v0.10.0"
 
 // EzBinaryBase is where the eztunnel binary is downloaded from, with the
 // release tag and the asset name appended.
@@ -283,9 +283,9 @@ const EzBinaryBase = "https://github.com/B3hnamR/EZTunnel/releases/download"
 func EzBinaryAsset(arch string) (string, bool) {
 	switch arch {
 	case "amd64":
-		return "eztunnel-0.9.14-linux-x86_64", true
+		return "eztunnel-0.10.0-linux-x86_64", true
 	case "arm64":
-		return "eztunnel-0.9.14-linux-aarch64", true
+		return "eztunnel-0.10.0-linux-aarch64", true
 	}
 	return "", false
 }
@@ -301,13 +301,13 @@ func EzBinaryURL(arch string) (string, bool) {
 }
 
 // EzBinaryChecksums is the SHA-256 of the eztunnel binary for each Go
-// architecture, as published in EZTunnel v0.9.14's SHA256SUMS and verified
+// architecture, as published in EZTunnel v0.10.0's SHA256SUMS and verified
 // by the panel against the downloaded binary. The binary is verified
 // against this before it is installed; a download that does not match is
 // refused, not installed.
 var EzBinaryChecksums = map[string]string{
-	"amd64": "a5ab711efa6b2a86f784a72686ed9101a4dd7f112f65e4e8d87ff15d6dfc67f9",
-	"arm64": "8ab138d644cbfc316eea74f3d8dc451d9d431bbf68e9d6d30be2083f47b4d13d",
+	"amd64": "57f4769a49fec5f80af103437ed967502c3ea07c57d21c4a9104b67b4919710b",
+	"arm64": "b3ac25bf3e9deeb6f6fa2fc352d3cea91d19280930866ef406a5293509ab25d5",
 }
 
 // EzBinaryName is the file name the binary is installed under, in the
