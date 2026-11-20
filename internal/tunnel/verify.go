@@ -392,7 +392,14 @@ func addressCheck(ctx context.Context, desired []link.Address, observed link.Lin
 	for _, want := range desired {
 		found := false
 		for _, have := range observed.Addresses {
-			if have.Address == want.Address && have.PrefixLength == want.PrefixLength {
+			// A userspace relay renders a /30 assignment as a
+			// point-to-point /32 (the address plus its peer), which is
+			// the same assignment in a different shape: the IP and the
+			// peer are what matter, not the prefix length the relay
+			// chose to report. A plain subnet assignment has no peer,
+			// so it still has to match its prefix exactly.
+			samePeer := have.Peer != "" && have.Peer == want.Peer
+			if have.Address == want.Address && (have.PrefixLength == want.PrefixLength || samePeer) {
 				found = true
 				break
 			}

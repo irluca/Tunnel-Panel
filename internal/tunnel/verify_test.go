@@ -104,3 +104,27 @@ func TestAnIPv4TunnelIsStillVerifiedAgainstItsTtl(t *testing.T) {
 		t.Error("an IPv4 tunnel running with the wrong TTL was reported as verified")
 	}
 }
+
+// A userspace relay renders a /30 assignment as a point-to-point /32 (the
+// address plus its peer), which is the same assignment in a different
+// shape. Seen live on 20 Nov 2026: an OmniTunnel apply failed its address
+// check because omnitun reported 10.10.2.1 peer 10.10.2.2/32 while the
+// panel wanted 10.10.2.1/30. The IP and the peer are what matter, not the
+// prefix length the relay chose to report.
+func TestAddressCheckAcceptsARelayPointToPointForm(t *testing.T) {
+	desired := []link.Address{{Address: "10.10.2.1", PrefixLength: 30, Peer: "10.10.2.2"}}
+	observed := link.Link{Addresses: []link.Address{{Address: "10.10.2.1", PrefixLength: 32, Peer: "10.10.2.2"}}}
+	if check := addressCheck(context.Background(), desired, observed); !check.Ok {
+		t.Errorf("a relay point-to-point /32 was rejected for a /30 assignment: %s", check.Detail)
+	}
+	// A different peer is still a different assignment, and a plain
+	// subnet assignment still has to match its prefix exactly.
+	wrongPeer := link.Link{Addresses: []link.Address{{Address: "10.10.2.1", PrefixLength: 32, Peer: "10.10.2.9"}}}
+	if check := addressCheck(context.Background(), desired, wrongPeer); check.Ok {
+		t.Error("an address with the wrong peer was accepted")
+	}
+	wrongPrefix := link.Link{Addresses: []link.Address{{Address: "10.10.2.1", PrefixLength: 24}}}
+	if check := addressCheck(context.Background(), []link.Address{{Address: "10.10.2.1", PrefixLength: 30}}, wrongPrefix); check.Ok {
+		t.Error("a subnet assignment with the wrong prefix was accepted")
+	}
+}

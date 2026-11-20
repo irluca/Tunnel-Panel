@@ -620,3 +620,23 @@ func TestIPCommandEspCreateWithoutAKeyFailsBeforeAnyCommand(t *testing.T) {
 		t.Fatalf("a rejected specification still ran %d commands: %v", len(got), got)
 	}
 }
+
+// The kernel calls a relay's TUN device "tuntap" when it is read back,
+// which is none of the panel's tunnel types — but it is still one of the
+// relays' interfaces, so verification has to recognise it as such.
+// Seen live on 20 Nov 2026: an OmniTunnel apply failed its type check
+// because the interface read back as "tuntap" while "omnitunnel" was
+// requested, even though the device was the relay's own.
+func TestTunTapReadsBackAsATunRelayKind(t *testing.T) {
+	if !IsTunRelayKind(KindTunTap) {
+		t.Error("the kernel's name for a TUN interface was not recognised as a relay kind")
+	}
+	for _, kind := range []string{KindGREWSS, KindOmniTunnel, KindEZTunnel} {
+		if !IsTunRelayKind(kind) {
+			t.Errorf("relay kind %q stopped being recognised as one", kind)
+		}
+	}
+	if IsTunRelayKind(KindGRE) || IsTunRelayKind(KindESP) {
+		t.Error("a kernel tunnel kind was wrongly recognised as a relay kind")
+	}
+}

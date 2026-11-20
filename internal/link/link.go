@@ -44,6 +44,12 @@ const (
 	// interface is a TUN the eztunnel binary creates, not a kernel
 	// interface; see internal/link/eztunnel.go and the eztunnel unit.
 	KindEZTunnel = "eztunnel"
+	// KindTunTap is the kernel's name for a TUN interface, as read back
+	// from the kernel. It is never a tunnel type the panel creates — a
+	// relay (GRE-over-WSS, OmniTunnel, EZTunnel) creates the device and
+	// the kernel calls it this — but verification has to recognise it as
+	// one of those relays' interfaces, not as a foreign kind.
+	KindTunTap = "tuntap"
 )
 
 // Manager implementation names, reported through /system/capabilities.
@@ -75,9 +81,10 @@ func TunnelKinds() []string {
 // keys and token live in the relay. An interface of any of them is the
 // same thing to a reader, so verification treats them as matching each
 // other; the interface name is unique per tunnel, so this cannot confuse
-// two tunnels.
+// two tunnels. The kernel's own name for such an interface, "tuntap",
+// counts too: that is what a relay's device reads back as.
 func IsTunRelayKind(kind string) bool {
-	return kind == KindGREWSS || kind == KindOmniTunnel || kind == KindEZTunnel
+	return kind == KindGREWSS || kind == KindOmniTunnel || kind == KindEZTunnel || kind == KindTunTap
 }
 
 // IsTunnelKind reports whether a kind names a tunnel this panel manages.
