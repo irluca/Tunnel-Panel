@@ -458,13 +458,13 @@ func TestXfrmStateAddArgs(t *testing.T) {
 	key := "0xaabbccddeeff00112233445566778899aabbccdd"
 	got := strings.Join(XfrmStateAddArgs("/sbin/ip", spec, true), " ")
 	want := "/sbin/ip xfrm state add src 203.0.113.10 dst 198.51.100.20 proto esp " +
-		"spi 0x12345678 mode transport aead rfc4106(gcm(aes)) " + key + " 128 replay-window 32 if_id 42"
+		"spi 0x12345678 mode transport aead rfc4106(gcm(aes)) " + key + " 128 replay-window 32 reqid 42 if_id 42"
 	if got != want {
 		t.Fatalf("outbound state argv\n got: %s\nwant: %s", got, want)
 	}
 	got = strings.Join(XfrmStateAddArgs("/sbin/ip", spec, false), " ")
 	want = "/sbin/ip xfrm state add src 198.51.100.20 dst 203.0.113.10 proto esp " +
-		"spi 0x87654321 mode transport aead rfc4106(gcm(aes)) " + key + " 128 replay-window 32 if_id 42"
+		"spi 0x87654321 mode transport aead rfc4106(gcm(aes)) " + key + " 128 replay-window 32 reqid 42 if_id 42"
 	if got != want {
 		t.Fatalf("inbound state argv\n got: %s\nwant: %s", got, want)
 	}
@@ -592,8 +592,8 @@ func TestIPCommandEspCreateRunsTheWholeSequence(t *testing.T) {
 		"/sbin/ip -j xfrm state",
 		"/sbin/ip -j xfrm policy",
 		"/sbin/ip link add name esp-a-1 type xfrm if_id 42",
-		"/sbin/ip xfrm state add src 203.0.113.10 dst 198.51.100.20 proto esp spi 0x12345678 mode transport aead rfc4106(gcm(aes)) " + key + " 128 replay-window 32 if_id 42",
-		"/sbin/ip xfrm state add src 198.51.100.20 dst 203.0.113.10 proto esp spi 0x87654321 mode transport aead rfc4106(gcm(aes)) " + key + " 128 replay-window 32 if_id 42",
+		"/sbin/ip xfrm state add src 203.0.113.10 dst 198.51.100.20 proto esp spi 0x12345678 mode transport aead rfc4106(gcm(aes)) " + key + " 128 replay-window 32 reqid 42 if_id 42",
+		"/sbin/ip xfrm state add src 198.51.100.20 dst 203.0.113.10 proto esp spi 0x87654321 mode transport aead rfc4106(gcm(aes)) " + key + " 128 replay-window 32 reqid 42 if_id 42",
 		"/sbin/ip xfrm policy add src 0.0.0.0/0 dst 0.0.0.0/0 dir out tmpl src 203.0.113.10 dst 198.51.100.20 proto esp spi 0x12345678 mode transport reqid 42 if_id 42",
 		"/sbin/ip xfrm policy add src 0.0.0.0/0 dst 0.0.0.0/0 dir in tmpl src 198.51.100.20 dst 203.0.113.10 proto esp spi 0x87654321 mode transport reqid 42 if_id 42",
 	}

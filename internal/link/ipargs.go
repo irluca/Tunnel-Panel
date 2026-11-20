@@ -126,6 +126,12 @@ func ttlWord(ttl int) string {
 // XfrmStateAddArgs builds `ip xfrm state add` for one direction of an ESP
 // tunnel. The key is hex-encoded with a 0x prefix, as iproute2 expects, and
 // it is the one element the audit trail must never record (see audit).
+//
+// The state carries the same request identifier as the policy template
+// (the interface identifier): the policy names its association by SPI and
+// reqid, so a state without reqid never matches the policy and the kernel
+// drops the tunnel's traffic with XfrmOutNoStates. The netlink path already
+// sets Reqid to the interface identifier; the argv path must do the same.
 func XfrmStateAddArgs(ipBin string, spec TunnelSpec, outbound bool) []string {
 	src, dst, spi := espSA(spec, outbound)
 	return []string{
@@ -135,6 +141,7 @@ func XfrmStateAddArgs(ipBin string, spec TunnelSpec, outbound bool) []string {
 		"mode", "transport",
 		"aead", EspAeadName, "0x" + hex.EncodeToString(spec.EspKey), strconv.Itoa(EspICVLen),
 		"replay-window", strconv.Itoa(EspReplayWindow),
+		"reqid", strconv.FormatUint(uint64(spec.EspIfID), 10),
 		"if_id", strconv.FormatUint(uint64(spec.EspIfID), 10),
 	}
 }
