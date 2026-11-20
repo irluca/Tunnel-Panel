@@ -318,6 +318,7 @@ func (r *Repo) ExistingTunnels(ctx context.Context) ([]validate.ExistingTunnel, 
 	for _, rec := range records {
 		existing := validate.ExistingTunnel{
 			TunnelID:       rec.TunnelID,
+			TunnelTypeID:   rec.TunnelTypeID,
 			InterfaceName:  rec.InterfaceName,
 			LocalEndpoint:  rec.LocalEndpoint,
 			RemoteEndpoint: rec.RemoteEndpoint,

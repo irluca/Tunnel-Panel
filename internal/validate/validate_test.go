@@ -961,6 +961,27 @@ func TestRelayTunnelBesideEspIsNotAnEndpointConflict(t *testing.T) {
 	}
 }
 
+// A GRE-family tunnel beside a userspace relay must not be refused either:
+// the relay's database GRE key is not a kernel-level identity, so a
+// GRE-over-WSS tunnel that defaults to the same key does not collide with
+// the OmniTunnel tunnel already on those endpoints.
+func TestGreFamilyBesideRelayIsNotAnEndpointConflict(t *testing.T) {
+	omni := &fakeRepo{tunnels: []ExistingTunnel{{
+		TunnelID: 5, TunnelTypeID: model.TunnelTypeOmniTunnel, InterfaceName: "omnitunnel-a-2",
+		LocalEndpoint: "203.0.113.10", RemoteEndpoint: "198.51.100.20",
+		IKey: i64(2749365187), OKey: i64(2749365187),
+	}}}
+	v, _ := newValidator(t, omni, nil)
+
+	in := validInput()
+	in.TunnelTypeID = model.TunnelTypeGREWSS
+	in.InterfaceName = "gre-wss-a-1"
+	in.WssPort = i64(2525)
+	if _, err := v.Validate(context.Background(), in); err != nil {
+		t.Fatalf("a GRE-WSS tunnel beside an Omni tunnel must not collide: %v", err)
+	}
+}
+
 func TestEspRejectsUnsupportedAttributes(t *testing.T) {
 	in := validEspInput()
 	in.IsPathMtuDiscovery = true

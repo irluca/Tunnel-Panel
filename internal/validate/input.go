@@ -180,6 +180,7 @@ func (in TunnelInput) HasKey() bool { return in.IKey != nil || in.OKey != nil }
 // conflict detection needs (§7.5).
 type ExistingTunnel struct {
 	TunnelID       int64
+	TunnelTypeID   int64
 	InterfaceName  string
 	LocalEndpoint  string
 	RemoteEndpoint string

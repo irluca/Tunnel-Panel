@@ -1061,8 +1061,17 @@ func (v *Validator) checkEndpointConflicts(ctx context.Context, in TunnelInput, 
 // level. GRE tunnels collide on (endpoints, keys); ESP tunnels collide on
 // (endpoints, SPIs), and the SPIs are derived from the endpoints and the
 // inner address pair, so the inner pair is what is compared.
+//
+// A userspace relay (OmniTunnel, EZTunnel) never collides on either tuple:
+// it runs as a userspace process on a TCP/UDP port behind a TUN device,
+// not as a kernel GRE interface or an xfrm security association, so the
+// GRE key it happens to carry in the database is not a kernel-level
+// identity and must not block a GRE-family tunnel beside it.
 func sameTunnelIdentity(in TunnelInput, existing ExistingTunnel) bool {
 	if !sameEndpointPair(in, existing) {
+		return false
+	}
+	if existingKind := model.TunnelTypeKind(existing.TunnelTypeID); existingKind == link.KindOmniTunnel || existingKind == link.KindEZTunnel {
 		return false
 	}
 	if in.Kind() == link.KindESP {
