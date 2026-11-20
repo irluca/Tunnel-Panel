@@ -993,7 +993,17 @@ func (st State) ownInterfaceNames(in TunnelInput) map[string]bool {
 // checkEndpointConflicts applies §7.5: the tuple that actually collides at the
 // kernel level is (local, remote, ikey, okey), and it collides in either
 // direction.
+//
+// A userspace relay (OmniTunnel, EZTunnel) never collides on that tuple: it
+// runs as a userspace process on a TCP/UDP port behind a TUN device, not as
+// a kernel GRE interface or an xfrm security association, so the endpoint
+// pair it shares with an ESP or GRE tunnel is not a kernel-level identity.
+// (Both kinds carry no GRE keys, so comparing their nil keys against an
+// ESP tunnel's nil keys used to report a phantom conflict.)
 func (v *Validator) checkEndpointConflicts(ctx context.Context, in TunnelInput, st State, errs *Errors, result *Result) {
+	if in.Kind() == link.KindOmniTunnel || in.Kind() == link.KindEZTunnel {
+		return
+	}
 	for _, existing := range st.Tunnels {
 		if existing.TunnelID == in.TunnelID {
 			continue

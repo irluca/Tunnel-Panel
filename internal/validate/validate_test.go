@@ -923,6 +923,44 @@ func TestDuplicateEspInnerPairIsRefusedInEitherDirection(t *testing.T) {
 	}
 }
 
+// A userspace relay (EZTunnel, OmniTunnel) shares its endpoints with an ESP
+// tunnel but never collides with it: it carries no GRE keys and no ESP
+// security associations, so the endpoint tuple is not a kernel-level
+// identity for it. (Regression: an EZ create against an ESP tunnel with
+// nil keys on both sides used to be refused as an endpoint conflict.)
+func TestRelayTunnelBesideEspIsNotAnEndpointConflict(t *testing.T) {
+	tcp := "tcp"
+	udp := "udp"
+	esp := &fakeRepo{tunnels: []ExistingTunnel{{
+		TunnelID: 3, InterfaceName: "esp-a-1",
+		LocalEndpoint: "203.0.113.10", RemoteEndpoint: "198.51.100.20",
+		Addresses: []AddressInput{{Address: "10.12.11.1", PrefixLength: 30, PeerAddress: "10.12.11.2", IsPrimary: true}},
+	}}}
+	v, _ := newValidator(t, esp, nil)
+
+	ez := validInput()
+	ez.TunnelTypeID = model.TunnelTypeEZTunnel
+	ez.InterfaceName = "eztunnel-a-1"
+	ez.IKey = nil
+	ez.OKey = nil
+	ez.EzTransport = &tcp
+	ez.EzPort = i64(2083)
+	if _, err := v.Validate(context.Background(), ez); err != nil {
+		t.Fatalf("an EZ tunnel beside an ESP tunnel must not collide: %v", err)
+	}
+
+	omni := validInput()
+	omni.TunnelTypeID = model.TunnelTypeOmniTunnel
+	omni.InterfaceName = "omnitunnel-a-1"
+	omni.IKey = nil
+	omni.OKey = nil
+	omni.OmniTransport = &udp
+	omni.OmniPort = i64(2083)
+	if _, err := v.Validate(context.Background(), omni); err != nil {
+		t.Fatalf("an Omni tunnel beside an ESP tunnel must not collide: %v", err)
+	}
+}
+
 func TestEspRejectsUnsupportedAttributes(t *testing.T) {
 	in := validEspInput()
 	in.IsPathMtuDiscovery = true
