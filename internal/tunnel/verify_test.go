@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/drs/gre-panel/internal/link"
 )
@@ -49,6 +50,35 @@ func TestAnIPv6TunnelIsVerifiedAgainstItsHopLimit(t *testing.T) {
 			t.Errorf("verification failed for an IPv6 tunnel whose hop limit was honoured: %s\n"+
 				"The hop limit is what was written, so it is what has to be checked.", check.Detail)
 		}
+	}
+}
+
+// A userspace relay (OmniTunnel, GRE-over-WSS) creates its TUN device
+// asynchronously after the unit starts, a second or two later, while a
+// kernel interface exists the moment the link command returns. Verify used
+// to look the interface up exactly once, so every relay apply rolled back
+// before the daemon had a chance to come up:
+//
+//	409 APPLY_FAILED  omnitunnel-a-2: verification failed: the interface
+//	                  omnitunnel-a-2 does not exist
+//
+// Seen live on 20 Nov 2026: omnitun printed "obsctun up" and the interface
+// appeared when the same binary was run by hand, but the panel had already
+// rolled back. The wait polls for the link instead of failing on the first
+// lookup.
+func TestVerifyWaitsForARelayInterfaceToAppear(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	go func() {
+		time.Sleep(400 * time.Millisecond)
+		h.links.AddLink(link.Link{Name: "omnitunnel-a-1"})
+	}()
+	observed, err := h.service.waitForLink(ctx, "omnitunnel-a-1")
+	if err != nil {
+		t.Fatalf("waitForLink gave up on a link that appeared after 400ms: %v", err)
+	}
+	if observed.Name != "omnitunnel-a-1" {
+		t.Errorf("waitForLink returned the wrong link: %q", observed.Name)
 	}
 }
 

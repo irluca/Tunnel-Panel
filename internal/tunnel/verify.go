@@ -2,6 +2,7 @@ package tunnel
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -82,6 +83,33 @@ func (r *VerifyReport) add(ctx context.Context, check VerifyCheck) {
 	}
 }
 
+// waitForLink polls for the interface to appear. A userspace relay
+// (OmniTunnel, GRE-over-WSS) creates its TUN device asynchronously after
+// the unit starts, a second or two later, while a kernel interface (GRE,
+// ESP) exists the moment the link command returns. Without the wait,
+// every relay apply would roll back before the daemon had a chance to
+// come up. A real error (not "not found") fails fast; a missing link is
+// retried for up to ten seconds.
+func (s *Service) waitForLink(ctx context.Context, name string) (link.Link, error) {
+	deadline := time.Now().Add(10 * time.Second)
+	var observed link.Link
+	var err error
+	for {
+		observed, err = s.links.Get(ctx, name)
+		if err == nil || !errors.Is(err, link.ErrNotFound) {
+			return observed, err
+		}
+		if time.Now().After(deadline) {
+			return observed, err
+		}
+		select {
+		case <-ctx.Done():
+			return observed, err
+		case <-time.After(200 * time.Millisecond):
+		}
+	}
+}
+
 // Verify confirms against the kernel that a tunnel is really what was asked
 // for (§9.3).
 //
@@ -94,7 +122,7 @@ func (s *Service) Verify(ctx context.Context, rec Record) VerifyReport {
 	desiredSpec := SpecOf(rec)
 	desiredAddresses := AddressesOf(rec)
 
-	observed, err := s.links.Get(ctx, rec.InterfaceName)
+	observed, err := s.waitForLink(ctx, rec.InterfaceName)
 	if err != nil {
 		report.add(ctx, VerifyCheck{
 			Name: CheckLinkExists, Fatal: true,
