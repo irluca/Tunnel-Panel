@@ -88,9 +88,13 @@ func IsTunRelayKind(kind string) bool {
 }
 
 // IsTunnelKind reports whether a kind names a tunnel this panel manages.
+// The kernel's read-back name for a relay's TUN device, "tuntap", counts
+// too: a GRE-over-WSS, OmniTunnel or EZTunnel interface reads back as
+// that, and it is still a tunnel this panel manages — the safety guard
+// must not refuse to touch it.
 func IsTunnelKind(kind string) bool {
 	switch kind {
-	case KindGRE, KindGRETAP, KindIP6GRE, KindIP6GRETAP, KindESP, KindGREWSS, KindOmniTunnel, KindEZTunnel:
+	case KindGRE, KindGRETAP, KindIP6GRE, KindIP6GRETAP, KindESP, KindGREWSS, KindOmniTunnel, KindEZTunnel, KindTunTap:
 		return true
 	}
 	return false

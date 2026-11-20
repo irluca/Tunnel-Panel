@@ -640,3 +640,19 @@ func TestTunTapReadsBackAsATunRelayKind(t *testing.T) {
 		t.Error("a kernel tunnel kind was wrongly recognised as a relay kind")
 	}
 }
+
+// The same read-back kind has to count as a tunnel for the safety guard
+// too, or a reapply of a relay tunnel is refused as "a tuntap interface,
+// not a tunnel". Seen live on 20 Nov 2026: a GRE-over-WSS reapply failed
+// with PROTECTED_INTERFACE for exactly that reason.
+func TestTunTapReadsBackAsATunnelKind(t *testing.T) {
+	if !IsTunnelKind(KindTunTap) {
+		t.Error("the kernel's name for a TUN interface was not recognised as a tunnel kind")
+	}
+	if !(Link{Kind: KindTunTap}).IsTunnel() {
+		t.Error("a link whose kind reads back as tuntap was not recognised as a tunnel")
+	}
+	if IsTunnelKind("ethernet") || IsTunnelKind("bridge") || IsTunnelKind("loopback") {
+		t.Error("a non-tunnel kind was wrongly recognised as a tunnel kind")
+	}
+}
