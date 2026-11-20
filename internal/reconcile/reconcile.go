@@ -421,7 +421,12 @@ func compare(ctx context.Context, rec tunnel.Record, observed link.Link) []Field
 			diffs = append(diffs, FieldDiff{Field: field, Desired: want, Actual: got})
 		}
 	}
-	add("tunnel_type", desired.Kind, observed.Kind)
+	// A userspace relay's TUN device reads back as kind "tuntap", not as
+	// the relay's own kind — that is the readback, not drift. Verification
+	// already treats it that way; reconcile must too.
+	if !(link.IsTunRelayKind(desired.Kind) && observed.Kind == link.KindTunTap) {
+		add("tunnel_type", desired.Kind, observed.Kind)
+	}
 	add("mtu", strconv.Itoa(desired.Mtu), strconv.Itoa(observed.MTU))
 
 	if desired.Kind == link.KindESP {
@@ -431,12 +436,15 @@ func compare(ctx context.Context, rec tunnel.Record, observed link.Link) []Field
 		// kernel reads the endpoints back as "" and the ttl as 0. Compare
 		// the SA/policy state instead, the same check verification runs.
 		diffs = append(diffs, espAssociationDiffs(ctx, desired, observed)...)
-	} else if observed.Tunnel == nil {
+	} else if observed.Tunnel == nil && !link.IsTunRelayKind(desired.Kind) {
+		// A TUN device reports no tunnel attributes: the endpoints, keys
+		// and token live in the relay. For any other kind, an interface
+		// that reports none has drifted.
 		diffs = append(diffs, FieldDiff{
 			Field: "tunnel_attributes", Desired: i18n.T(ctx, "present"),
 			Actual: i18n.T(ctx, "the interface reports none"),
 		})
-	} else {
+	} else if observed.Tunnel != nil {
 		t := observed.Tunnel
 		add("local_endpoint", desired.Local, t.Local)
 		add("remote_endpoint", desired.Remote, t.Remote)
@@ -454,7 +462,7 @@ func compare(ctx context.Context, rec tunnel.Record, observed link.Link) []Field
 	add("is_up", yesNo(ctx, rec.IsEnabled), yesNo(ctx, observed.IsUp))
 
 	for _, want := range tunnel.AddressesOf(rec) {
-		if !observed.HasAddress(want) {
+		if !observedHasAddress(observed, want) {
 			diffs = append(diffs, FieldDiff{
 				Field: "address " + want.String(), Desired: i18n.T(ctx, "present"),
 				Actual: i18n.T(ctx, "missing"),
@@ -467,7 +475,7 @@ func compare(ctx context.Context, rec tunnel.Record, observed link.Link) []Field
 		}
 		found := false
 		for _, want := range tunnel.AddressesOf(rec) {
-			if want.Address == got.Address && want.PrefixLength == got.PrefixLength {
+			if addressMatches(want, got) {
 				found = true
 				break
 			}
@@ -480,6 +488,28 @@ func compare(ctx context.Context, rec tunnel.Record, observed link.Link) []Field
 		}
 	}
 	return diffs
+}
+
+// addressMatches is the address comparison verification runs: a userspace
+// relay renders a /30 assignment as a point-to-point /32 (the address plus
+// its peer), which is the same assignment in a different shape — the IP and
+// the peer are what matter, not the prefix length the relay chose to
+// report. A plain subnet assignment has no peer, so it still has to match
+// its prefix exactly.
+func addressMatches(want, got link.Address) bool {
+	samePeer := got.Peer != "" && got.Peer == want.Peer
+	return got.Address == want.Address && (got.PrefixLength == want.PrefixLength || samePeer)
+}
+
+// observedHasAddress reports whether the interface carries the desired
+// address, using the same point-to-point rule as addressMatches.
+func observedHasAddress(observed link.Link, want link.Address) bool {
+	for _, got := range observed.Addresses {
+		if addressMatches(want, got) {
+			return true
+		}
+	}
+	return false
 }
 
 // espAssociationDiffs compares an ESP tunnel's security associations and

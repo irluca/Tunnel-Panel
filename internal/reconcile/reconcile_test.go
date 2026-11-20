@@ -418,6 +418,37 @@ func TestCompareEspUsesTheSecurityAssociations(t *testing.T) {
 	}
 }
 
+// TestCompareTunRelayAcceptsTheKernelReadback is the companion to the ESP
+// test above: a userspace relay's TUN device reads back as kind "tuntap",
+// reports no tunnel attributes, and renders a /30 assignment as a
+// point-to-point /32. None of that is drift.
+func TestCompareTunRelayAcceptsTheKernelReadback(t *testing.T) {
+	ctx := context.Background()
+	peer := "10.10.3.2"
+	rec := tunnel.Record{Tunnel: model.Tunnel{
+		TunnelTypeID:   model.TunnelTypeEZTunnel,
+		InterfaceName:  "eztunnel-a-3",
+		LocalEndpoint:  "203.0.113.10",
+		RemoteEndpoint: "198.51.100.20",
+		Ttl:            255, Mtu: 1400, IsEnabled: true,
+	}, Addresses: []model.TunnelAddress{{
+		Address: "10.10.3.1", PrefixLength: 30, PeerAddress: &peer,
+		AddressFamilyID: model.AddressFamilyIPv4, IsPrimary: true,
+	}}}
+	observed := link.Link{
+		Name: "eztunnel-a-3", MTU: 1400, Kind: link.KindTunTap,
+		OperState: "UNKNOWN", IsUp: true, IsLowerUp: true,
+		Tunnel: nil,
+		Addresses: []link.Address{{
+			Address: "10.10.3.1", PrefixLength: 32, Peer: "10.10.3.2",
+			Family: link.FamilyIPv4, Scope: "global",
+		}},
+	}
+	if diffs := compare(ctx, rec, observed); len(diffs) != 0 {
+		t.Fatalf("a healthy TUN-relay tunnel must not drift: %+v", diffs)
+	}
+}
+
 func TestReportDetectsAMissingInterface(t *testing.T) {
 	h := newHarness(t)
 	ctx := context.Background()
