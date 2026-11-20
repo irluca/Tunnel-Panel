@@ -138,7 +138,7 @@ func XfrmStateAddArgs(ipBin string, spec TunnelSpec, outbound bool) []string {
 		ipBin, "xfrm", "state", "add",
 		"src", src, "dst", dst, "proto", "esp",
 		"spi", "0x" + strconv.FormatUint(uint64(spi), 16),
-		"mode", "transport",
+		"mode", "tunnel",
 		"aead", EspAeadName, "0x" + hex.EncodeToString(spec.EspKey), strconv.Itoa(EspICVLen),
 		"replay-window", strconv.Itoa(EspReplayWindow),
 		"reqid", strconv.FormatUint(uint64(spec.EspIfID), 10),
@@ -172,7 +172,7 @@ func XfrmPolicyAddArgs(ipBin string, spec TunnelSpec, outbound bool) []string {
 		"src", "0.0.0.0/0", "dst", "0.0.0.0/0", "dir", dir,
 		"tmpl", "src", src, "dst", dst, "proto", "esp",
 		"spi", "0x" + strconv.FormatUint(uint64(spi), 16),
-		"mode", "transport",
+		"mode", "tunnel",
 		"reqid", strconv.FormatUint(uint64(spec.EspIfID), 10),
 		"if_id", strconv.FormatUint(uint64(spec.EspIfID), 10),
 	}

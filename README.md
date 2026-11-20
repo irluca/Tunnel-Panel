@@ -97,7 +97,7 @@ Tunnel-Panel; only the carriers and the operations around them are new.
 | Type | ID | What it is | When to use it |
 |---|---|---|---|
 | GRE, GRETAP, IP6GRE, IP6GRETAP | 1–4 | Upstream GRE, no encryption | Clean path, fastest setup |
-| ESP | type 50 | Kernel XFRM, transport mode, AES-128-GCM, manually keyed, no IKE | Clean path, encrypted, kernel speed |
+| ESP | type 50 | Kernel XFRM, tunnel mode, AES-128-GCM, manually keyed, no IKE | Clean path, encrypted, kernel speed |
 | GRE-over-WSS | type 60 | Real GRE headers carried over WebSocket Secure by a userspace relay | Path filters IP protocols 47 and 50 |
 | OmniTunnel | type 70 | The `omnitun` binary (v2.9.17, pinned SHA-256), transports udp, tcp, mux, ws, icmp | One binary, several transports |
 | EZTunnel | type 80 | The `eztunnel` binary whole and untouched (v0.10.0, pinned SHA-256), Noise encryption (ChaCha20-Poly1305) | Hard path, 15 transports |

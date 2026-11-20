@@ -458,13 +458,13 @@ func TestXfrmStateAddArgs(t *testing.T) {
 	key := "0xaabbccddeeff00112233445566778899aabbccdd"
 	got := strings.Join(XfrmStateAddArgs("/sbin/ip", spec, true), " ")
 	want := "/sbin/ip xfrm state add src 203.0.113.10 dst 198.51.100.20 proto esp " +
-		"spi 0x12345678 mode transport aead rfc4106(gcm(aes)) " + key + " 128 replay-window 32 reqid 42 if_id 42"
+		"spi 0x12345678 mode tunnel aead rfc4106(gcm(aes)) " + key + " 128 replay-window 32 reqid 42 if_id 42"
 	if got != want {
 		t.Fatalf("outbound state argv\n got: %s\nwant: %s", got, want)
 	}
 	got = strings.Join(XfrmStateAddArgs("/sbin/ip", spec, false), " ")
 	want = "/sbin/ip xfrm state add src 198.51.100.20 dst 203.0.113.10 proto esp " +
-		"spi 0x87654321 mode transport aead rfc4106(gcm(aes)) " + key + " 128 replay-window 32 reqid 42 if_id 42"
+		"spi 0x87654321 mode tunnel aead rfc4106(gcm(aes)) " + key + " 128 replay-window 32 reqid 42 if_id 42"
 	if got != want {
 		t.Fatalf("inbound state argv\n got: %s\nwant: %s", got, want)
 	}
@@ -474,13 +474,13 @@ func TestXfrmPolicyArgs(t *testing.T) {
 	spec := espTestSpec(t)
 	got := strings.Join(XfrmPolicyAddArgs("/sbin/ip", spec, true), " ")
 	want := "/sbin/ip xfrm policy add src 0.0.0.0/0 dst 0.0.0.0/0 dir out " +
-		"tmpl src 203.0.113.10 dst 198.51.100.20 proto esp spi 0x12345678 mode transport reqid 42 if_id 42"
+		"tmpl src 203.0.113.10 dst 198.51.100.20 proto esp spi 0x12345678 mode tunnel reqid 42 if_id 42"
 	if got != want {
 		t.Fatalf("outbound policy argv\n got: %s\nwant: %s", got, want)
 	}
 	got = strings.Join(XfrmPolicyAddArgs("/sbin/ip", spec, false), " ")
 	want = "/sbin/ip xfrm policy add src 0.0.0.0/0 dst 0.0.0.0/0 dir in " +
-		"tmpl src 198.51.100.20 dst 203.0.113.10 proto esp spi 0x87654321 mode transport reqid 42 if_id 42"
+		"tmpl src 198.51.100.20 dst 203.0.113.10 proto esp spi 0x87654321 mode tunnel reqid 42 if_id 42"
 	if got != want {
 		t.Fatalf("inbound policy argv\n got: %s\nwant: %s", got, want)
 	}
@@ -549,8 +549,8 @@ func TestIPCommandXfrmAttrs(t *testing.T) {
 	runner.Responses["/sbin/ip -j -d -s link show"] = exec.Result{Stdout: verifiedXfrmLinkJSON}
 	runner.Responses["/sbin/ip -j addr show"] = exec.Result{Stdout: `[]`}
 	runner.Responses["/sbin/ip -j xfrm state"] = exec.Result{Stdout: `[
-		{"src":"203.0.113.10","dst":"198.51.100.20","proto":"esp","spi":305419896,"reqid":42,"mode":"transport","if_id":42},
-		{"src":"198.51.100.20","dst":"203.0.113.10","proto":"esp","spi":2271560481,"reqid":42,"mode":"transport","if_id":42}]`}
+		{"src":"203.0.113.10","dst":"198.51.100.20","proto":"esp","spi":305419896,"reqid":42,"mode":"tunnel","if_id":42},
+		{"src":"198.51.100.20","dst":"203.0.113.10","proto":"esp","spi":2271560481,"reqid":42,"mode":"tunnel","if_id":42}]`}
 	runner.Responses["/sbin/ip -j xfrm policy"] = exec.Result{Stdout: `[
 		{"src":"0.0.0.0/0","dst":"0.0.0.0/0","dir":"out","if_id":42},
 		{"src":"0.0.0.0/0","dst":"0.0.0.0/0","dir":"in","if_id":42}]`}
@@ -592,10 +592,10 @@ func TestIPCommandEspCreateRunsTheWholeSequence(t *testing.T) {
 		"/sbin/ip -j xfrm state",
 		"/sbin/ip -j xfrm policy",
 		"/sbin/ip link add name esp-a-1 type xfrm if_id 42",
-		"/sbin/ip xfrm state add src 203.0.113.10 dst 198.51.100.20 proto esp spi 0x12345678 mode transport aead rfc4106(gcm(aes)) " + key + " 128 replay-window 32 reqid 42 if_id 42",
-		"/sbin/ip xfrm state add src 198.51.100.20 dst 203.0.113.10 proto esp spi 0x87654321 mode transport aead rfc4106(gcm(aes)) " + key + " 128 replay-window 32 reqid 42 if_id 42",
-		"/sbin/ip xfrm policy add src 0.0.0.0/0 dst 0.0.0.0/0 dir out tmpl src 203.0.113.10 dst 198.51.100.20 proto esp spi 0x12345678 mode transport reqid 42 if_id 42",
-		"/sbin/ip xfrm policy add src 0.0.0.0/0 dst 0.0.0.0/0 dir in tmpl src 198.51.100.20 dst 203.0.113.10 proto esp spi 0x87654321 mode transport reqid 42 if_id 42",
+		"/sbin/ip xfrm state add src 203.0.113.10 dst 198.51.100.20 proto esp spi 0x12345678 mode tunnel aead rfc4106(gcm(aes)) " + key + " 128 replay-window 32 reqid 42 if_id 42",
+		"/sbin/ip xfrm state add src 198.51.100.20 dst 203.0.113.10 proto esp spi 0x87654321 mode tunnel aead rfc4106(gcm(aes)) " + key + " 128 replay-window 32 reqid 42 if_id 42",
+		"/sbin/ip xfrm policy add src 0.0.0.0/0 dst 0.0.0.0/0 dir out tmpl src 203.0.113.10 dst 198.51.100.20 proto esp spi 0x12345678 mode tunnel reqid 42 if_id 42",
+		"/sbin/ip xfrm policy add src 0.0.0.0/0 dst 0.0.0.0/0 dir in tmpl src 198.51.100.20 dst 203.0.113.10 proto esp spi 0x87654321 mode tunnel reqid 42 if_id 42",
 	}
 	if got := runner.CommandLines(); len(got) != len(want) {
 		t.Fatalf("ran %d commands, want %d:\n%v", len(got), len(want), got)

@@ -16,7 +16,14 @@ import (
 // ESP tunnel identity.
 //
 // An ESP tunnel is a kernel xfrm interface bound to a pair of manually keyed
-// IPsec security associations: AES-128-GCM, no IKE, transport mode. The two
+// IPsec security associations: AES-128-GCM, no IKE, tunnel mode. Tunnel
+// mode, not transport: the inner addresses differ from the security
+// associations' endpoints, and transport mode leaves the inner addresses on
+// the wire, so the packet could never be routed to the peer's public
+// address. Tunnel mode wraps the inner packet in a new outer header
+// addressed to the peer. Proven live 20 Nov 2026: transport mode never
+// passed a packet in any shape tried; tunnel mode passed 4/4 at ~43 ms.
+// The two
 // ends never exchange the SPIs through a handshake, so the panel derives them
 // deterministically from the tunnel's stable identity instead. Both ends
 // compute the same pair, because the derivation orders the endpoints

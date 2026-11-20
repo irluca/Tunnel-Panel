@@ -66,7 +66,7 @@ func (n *Netlink) createESP(ctx context.Context, spec TunnelSpec, local, remote 
 		}
 		state := &netlink.XfrmState{
 			Src: src, Dst: dst, Proto: netlink.XFRM_PROTO_ESP,
-			Mode: netlink.XFRM_MODE_TRANSPORT, Spi: int(spi),
+			Mode: netlink.XFRM_MODE_TUNNEL, Spi: int(spi),
 			Reqid: ifid, Ifid: ifid, ReplayWindow: EspReplayWindow,
 			Aead: &netlink.XfrmStateAlgo{Name: EspAeadName, Key: spec.EspKey, ICVLen: EspICVLen},
 		}
@@ -94,7 +94,7 @@ func (n *Netlink) createESP(ctx context.Context, spec TunnelSpec, local, remote 
 			Dir: dir, Action: netlink.XFRM_POLICY_ALLOW, Ifid: ifid,
 			Tmpls: []netlink.XfrmPolicyTmpl{{
 				Dst: dst, Src: src, Proto: netlink.XFRM_PROTO_ESP,
-				Mode: netlink.XFRM_MODE_TRANSPORT, Spi: int(spi), Reqid: ifid,
+				Mode: netlink.XFRM_MODE_TUNNEL, Spi: int(spi), Reqid: ifid,
 			}},
 		}
 		trace(ctx, fmt.Sprintf("XfrmPolicyAdd dir %s if_id %d", dir, ifid), nil)

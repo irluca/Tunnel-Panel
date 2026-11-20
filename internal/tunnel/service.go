@@ -360,8 +360,10 @@ func (s *Service) ApplyDefaults(ctx context.Context, in *validate.TunnelInput) e
 	}
 	if in.Mtu == 0 {
 		// An ESP tunnel defaults to 1350 rather than the GRE default: the
-		// ESP encapsulation costs 54 bytes, and 1350 leaves room for an
-		// underlay that is not quite 1500 without fragmenting. A
+		// ESP tunnel-mode encapsulation costs about 74 bytes (the ESP
+		// overhead plus a 20-byte outer IPv4 header), and 1350 leaves
+		// room for an underlay that is not quite 1500 without
+		// fragmenting. A
 		// GRE-over-WSS tunnel takes the same default: the GRE header plus
 		// the TCP, TLS and WebSocket framing of its underlay cost about the
 		// same. An OmniTunnel tunnel takes 1400, the value OmniTunnel's own
