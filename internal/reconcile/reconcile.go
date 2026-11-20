@@ -11,6 +11,7 @@ package reconcile
 import (
 	"context"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -423,7 +424,14 @@ func compare(ctx context.Context, rec tunnel.Record, observed link.Link) []Field
 	add("tunnel_type", desired.Kind, observed.Kind)
 	add("mtu", strconv.Itoa(desired.Mtu), strconv.Itoa(observed.MTU))
 
-	if observed.Tunnel == nil {
+	if desired.Kind == link.KindESP {
+		// An xfrm interface stores its endpoints, ttl and keys in the
+		// security associations and policies, not as link attributes, so
+		// the GRE-style comparison below would always report drift — the
+		// kernel reads the endpoints back as "" and the ttl as 0. Compare
+		// the SA/policy state instead, the same check verification runs.
+		diffs = append(diffs, espAssociationDiffs(ctx, desired, observed)...)
+	} else if observed.Tunnel == nil {
 		diffs = append(diffs, FieldDiff{
 			Field: "tunnel_attributes", Desired: i18n.T(ctx, "present"),
 			Actual: i18n.T(ctx, "the interface reports none"),
@@ -470,6 +478,56 @@ func compare(ctx context.Context, rec tunnel.Record, observed link.Link) []Field
 				Actual: i18n.T(ctx, "present"),
 			})
 		}
+	}
+	return diffs
+}
+
+// espAssociationDiffs compares an ESP tunnel's security associations and
+// policies — the only place an xfrm interface keeps its identity — instead
+// of the GRE-style endpoint/ttl/key comparison, which always drifts for
+// ESP because the kernel reads those back as empty/zero.
+func espAssociationDiffs(ctx context.Context, desired link.TunnelSpec, observed link.Link) []FieldDiff {
+	var diffs []FieldDiff
+	want := fmt.Sprintf("0x%x, 0x%x", desired.EspSPIOut, desired.EspSPIIn)
+	if observed.Tunnel == nil || observed.Tunnel.Esp == nil {
+		return []FieldDiff{{
+			Field: "esp_associations", Desired: want,
+			Actual: i18n.T(ctx, "none"),
+		}, {
+			Field: "esp_policies", Desired: i18n.T(ctx, "both policies present"),
+			Actual: i18n.T(ctx, "missing"),
+		}}
+	}
+	esp := observed.Tunnel.Esp
+	var have []string
+	for _, spi := range esp.SPIs {
+		have = append(have, fmt.Sprintf("0x%x", spi))
+	}
+	got := strings.Join(have, ", ")
+	if got == "" {
+		got = i18n.T(ctx, "none")
+	}
+	missing := false
+	for _, spi := range []uint32{desired.EspSPIOut, desired.EspSPIIn} {
+		found := false
+		for _, h := range esp.SPIs {
+			if h == spi {
+				found = true
+				break
+			}
+		}
+		if !found {
+			missing = true
+		}
+	}
+	if missing {
+		diffs = append(diffs, FieldDiff{Field: "esp_associations", Desired: want, Actual: got})
+	}
+	if !esp.PoliciesPresent {
+		diffs = append(diffs, FieldDiff{
+			Field: "esp_policies", Desired: i18n.T(ctx, "both policies present"),
+			Actual: i18n.T(ctx, "missing"),
+		})
 	}
 	return diffs
 }

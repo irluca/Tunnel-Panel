@@ -356,6 +356,68 @@ func TestReportDetectsDriftWithExactFieldDiffs(t *testing.T) {
 	}
 }
 
+// TestCompareEspUsesTheSecurityAssociations is the regression test for the
+// reconcile drift bug: an xfrm interface reports no endpoints and a ttl of
+// 0, because those live in the security associations and policies, not as
+// link attributes. Comparing them the GRE way always reported drift.
+func TestCompareEspUsesTheSecurityAssociations(t *testing.T) {
+	ctx := context.Background()
+	key, err := link.GenerateEspKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	peer := "10.10.1.2"
+	rec := tunnel.Record{Tunnel: model.Tunnel{
+		TunnelTypeID:   model.TunnelTypeESP,
+		InterfaceName:  "esp-a-1",
+		LocalEndpoint:  "203.0.113.10",
+		RemoteEndpoint: "198.51.100.20",
+		Ttl:            255, Mtu: 1472, IsEnabled: true,
+		EspKey: &key,
+	}, Addresses: []model.TunnelAddress{{
+		Address: "10.10.1.1", PrefixLength: 30, PeerAddress: &peer,
+		AddressFamilyID: model.AddressFamilyIPv4, IsPrimary: true,
+	}}}
+	spiOut, spiIn, err := link.EspSPIs(link.EspIdentity{
+		Local: "203.0.113.10", Remote: "198.51.100.20",
+		InnerLocal: "10.10.1.1", InnerRemote: "10.10.1.2",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	observed := link.Link{
+		Name: "esp-a-1", MTU: 1472, Kind: link.KindESP,
+		OperState: "UNKNOWN", IsUp: true, IsLowerUp: true,
+		// The kernel reads an xfrm interface's endpoints back as "" and
+		// its ttl as 0 — that is the readback this test is about.
+		Tunnel: &link.TunnelAttrs{Local: "", Remote: "", Ttl: 0,
+			Esp: &link.EspAttrs{
+				IfID:            link.EspIfID("203.0.113.10", "198.51.100.20", "esp-a-1"),
+				SPIs:            []uint32{spiOut, spiIn},
+				PoliciesPresent: true,
+			}},
+		Addresses: []link.Address{{Address: "10.10.1.1", PrefixLength: 30, Family: link.FamilyIPv4, Scope: "global"}},
+	}
+	if diffs := compare(ctx, rec, observed); len(diffs) != 0 {
+		t.Fatalf("a healthy ESP tunnel must not drift: %+v", diffs)
+	}
+
+	// A missing security association is real drift, and it must be named.
+	observed.Tunnel.Esp.SPIs = []uint32{spiOut}
+	diffs := compare(ctx, rec, observed)
+	if len(diffs) != 1 || diffs[0].Field != "esp_associations" {
+		t.Fatalf("a missing SA must drift on esp_associations: %+v", diffs)
+	}
+
+	// Missing policies are real drift too.
+	observed.Tunnel.Esp.SPIs = []uint32{spiOut, spiIn}
+	observed.Tunnel.Esp.PoliciesPresent = false
+	diffs = compare(ctx, rec, observed)
+	if len(diffs) != 1 || diffs[0].Field != "esp_policies" {
+		t.Fatalf("missing policies must drift on esp_policies: %+v", diffs)
+	}
+}
+
 func TestReportDetectsAMissingInterface(t *testing.T) {
 	h := newHarness(t)
 	ctx := context.Background()
